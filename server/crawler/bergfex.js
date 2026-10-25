@@ -19,7 +19,7 @@ const meta = (html, name) => {
 
 const KIND_BY_TYPE = { wanderung: 'hike', bergtour: 'hike', hochtour: 'hike', klettersteig: 'hike', 'alpine-tour': 'hike', skitour: 'skitour', schneeschuh: 'snowshoe', 'schneeschuhwanderung': 'snowshoe', winterwanderung: 'hike' };
 
-function parseTour(html, url, type) {
+export function parseTour(html, url, type) {
   const geo = meta(html, 'geoposition');
   if (!geo) return null;
   const [lat, lon] = geo.split(',').map(Number);

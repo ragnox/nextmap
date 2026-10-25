@@ -7,7 +7,7 @@ A FATMAP-style 3D map of Tyrol, on the same engine as the Stummerberg walkthroug
 - **Winter** lays the Sentinel-2 snow cover (NDSI, so it also finds snow in shadow) onto the high-resolution orthophoto; walls too steep to hold snow stay bare. Choose “Sentinel-2 · current season” to see the raw satellite scene instead.
 - **Overlays**: slope angle in the usual avalanche classes (30/35/40/45°), contour lines, and from Land Tirol: mountain trails, wildlife and forest protection zones, lifts.
 - **Routes**: a crawler that finds hiking and ski-touring routes for a region (default Zillertal):
-  - **OpenStreetMap** (Overpass): hiking route relations and ski tours, with tracks. Unnamed routes are named after the summit or hut at their highest point; ski tours split into several ways are merged.
+  - **OpenStreetMap** (Overpass): hiking route relations and ski tours, with tracks. Unnamed routes, and those named only by a trail number, are named after the summit or hut at their highest point; ski tours split into several ways are merged. A region that has never been crawled fetches its OSM routes as soon as it is opened.
   - **bergfex.at**: the region's hiking and ski-touring listings; start point, length, ascent, altitude range, time and difficulty. Their tracks need a login and are not fetched; these show as start markers with a link.
   - Robots.txt is honoured (for `nextmap` or `*`), with at least 1.5 s between requests to a site, and every page is cached so re-crawls stay quiet.
   - Every route with a track is measured on the tiris DGM (length, ascent, descent, high and low point); selecting one draws its elevation profile from the 0.5 m DGM and offers a GPX download.
@@ -22,6 +22,10 @@ npm start
 Then open http://localhost:5173. `npm run dev` rebuilds the frontend and restarts the server on changes.
 
 Crawl from the shell instead of the button: `npm run crawl -- "Zillertal"` (or `npm run crawl -- "Stubaital" osm`).
+
+`npm test` runs the unit tests (robots.txt rules, the bergfex page parser, OSM line chaining and route naming, projections and tile maths).
+
+On a phone the route list is a bottom sheet (tap its header to expand it) and the layers open from the button at the top right.
 
 ## Controls
 

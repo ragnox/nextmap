@@ -9,7 +9,8 @@
     "watch": "esbuild src/main.js --bundle --sourcemap --format=esm --target=es2022 --outfile=public/app.js --watch=forever",
     "start": "npm run build && node server/index.js",
     "dev": "npm run build && (npm run watch & node --watch-path=server server/index.js)",
-    "crawl": "node server/crawler/cli.js"
+    "crawl": "node server/crawler/cli.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"

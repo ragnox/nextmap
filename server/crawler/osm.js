@@ -24,8 +24,10 @@ function query([w, s, e, n]) {
 .p out center tags;`;
 }
 
+export const NUMBERED = /^(?:wanderweg|weg|steig|route|trail|nr\.?)?\s*[a-z]{0,2}\s?\d+[a-z]?$/i;
+
 // geometry clipped to the bounding box has nulls where it leaves the box: split there
-function pieces(geom) {
+export function pieces(geom) {
   const out = []; let cur = [];
   for (const p of geom) {
     if (p) cur.push(p);
@@ -36,7 +38,7 @@ function pieces(geom) {
 }
 
 // join way geometries into as few lines as possible by matching end points
-function chain(ways) {
+export function chain(ways) {
   const segs = ways.map((g) => g.map((p) => [p.lon, p.lat])).filter((g) => g.length > 1);
   const same = (a, b) => Math.abs(a[0] - b[0]) < 1e-7 && Math.abs(a[1] - b[1]) < 1e-7;
   const lines = [];
@@ -59,7 +61,7 @@ function chain(ways) {
   return lines;
 }
 
-function kindOf(t) {
+export function kindOf(t) {
   if (t.route === 'hiking' || t.route === 'foot') return 'hike';
   const pt = t['piste:type'];
   if (pt === 'skitour' || (t.route === 'ski' && !pt)) return 'skitour';
@@ -91,10 +93,13 @@ export async function crawlOsm(region, log) {
     const ways = geoms.flatMap(pieces);
     const lines = chain(ways).map((l) => simplify(l, 4)).filter((l) => l.length > 1);
     if (!lines.length) continue;
-    const own = t.name || t['name:de'] || (t.from && t.to ? `${t.from} – ${t.to}` : null);
+    let own = t.name || t['name:de'] || (t.from && t.to ? `${t.from} – ${t.to}` : null);
+    // a trail number ("5", "26a", "Wanderweg 21") says nothing about where the route goes
+    const numbered = own && NUMBERED.test(own.trim()) && !['iwn', 'nwn'].includes(t.network);
+    if (numbered && /^\d/.test(own.trim())) own = `Weg ${own.trim()}`;
     const name = own || (kind === 'skitour' ? 'Skitour' : t.ref ? `Weg ${t.ref}` : 'Wanderweg');
     routes.push({
-      id: `osm-${el.type[0]}${el.id}`, source: 'osm', kind, name, generic: !own,
+      id: `osm-${el.type[0]}${el.id}`, source: 'osm', kind, name, generic: !own || numbered,
       ref: t.ref || null, network: t.network || null, operator: t.operator || null,
       difficulty: t.sac_scale || t['piste:difficulty'] || t['ski:difficulty'] || null,
       from: t.from || null, to: t.to || null, description: t.description || t.note || null,

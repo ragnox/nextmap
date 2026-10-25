@@ -38,7 +38,12 @@ export function createUI(app) {
       state.region = region;
       $('region').value = region.name;
       app.setRegion(region, { fly });
-      await loadRoutes();
+      const data = await loadRoutes();
+      // a region nobody has crawled yet: fetch its OpenStreetMap routes right away (the web sites stay on the button)
+      if (!state.all.length && !Object.keys(data.sources || {}).length && !state.crawling) {
+        $('crawl-status').textContent = `Fetching OpenStreetMap routes for ${region.name}…`;
+        startCrawl(['osm']);
+      }
       state.s2 = {};
       refreshS2();
     } catch (e) { $('crawl-status').textContent = `Region not found: ${e.message}`; }
@@ -54,6 +59,7 @@ export function createUI(app) {
     $('crawl-status').textContent = state.all.length ? `${state.all.length} routes cached · ${srcs.join(' · ')}` : 'No routes for this region yet. Search the web to find some.';
     applyFilter();
     if (sel) { const r = state.all.find((x) => x.id === sel); if (r) { state.selected = r; routes.select(r); } }
+    return data;
   }
 
   function viewCenterLonLat() { return frame.toLonLat(controls.target.x, controls.target.z); }
@@ -205,11 +211,12 @@ export function createUI(app) {
     $('crawl-sources').innerHTML = list.map((s) => `<label><input type="checkbox" value="${s.id}" checked> ${esc(s.label)}</label>`).join('');
   });
   $('crawl-toggle').addEventListener('click', () => { $('crawl-more').hidden = !$('crawl-more').hidden; $('crawl-log').hidden = $('crawl-more').hidden; });
-  $('crawl').addEventListener('click', async () => {
-    const sources = [...document.querySelectorAll('#crawl-sources input:checked')].map((i) => i.value);
+  async function startCrawl(sources) {
+    state.crawling = true;
     await getJSON('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ region: state.region?.name || $('region').value, sources }) });
     pollCrawl();
-  });
+  }
+  $('crawl').addEventListener('click', () => startCrawl([...document.querySelectorAll('#crawl-sources input:checked')].map((i) => i.value)));
   let lastReload = 0;
   async function pollCrawl() {
     const s = await getJSON('/api/crawl').catch(() => null);
@@ -260,6 +267,17 @@ export function createUI(app) {
     terrain.set({ tiris: [...document.querySelectorAll('[data-tiris]:checked')].map((x) => x.dataset.tiris) }); invalidate();
   }));
   $('sun').addEventListener('input', () => app.setSun($('sun').value / 100));
+
+  // phones: the layer panel opens from a button, the side panel is a bottom sheet that expands from its header
+  $('layers-btn').addEventListener('click', () => {
+    const open = $('layers').classList.toggle('open');
+    $('layers-btn').setAttribute('aria-expanded', open);
+  });
+  document.querySelector('#side > header').addEventListener('click', (e) => {
+    if (window.innerWidth > 760 || e.target.closest('form')) return;
+    $('side').classList.toggle('expanded');
+  });
+  $('side').addEventListener('transitionend', () => window.dispatchEvent(new Event('resize')));
 
   const headingNow = () => { const d = new THREE.Vector3().subVectors(controls.target, camera.position); return (Math.atan2(d.x, -d.z) * 180) / Math.PI; };
   $('compass').addEventListener('click', () => {

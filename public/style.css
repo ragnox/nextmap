@@ -82,9 +82,24 @@ select option { background: #1d2228; }
 #tooltip { position: fixed; pointer-events: none; z-index: 7; background: rgba(12, 14, 17, 0.9); padding: 4px 9px; border-radius: 8px; font-size: 12px;
   transform: translate(12px, -50%); white-space: nowrap; border: 1px solid var(--line); }
 
+#layers-btn { display: none; }
 @media (max-width: 760px) {
-  #side { top: auto; bottom: 30px; left: 0; right: 0; width: auto; height: 46%; border-radius: 14px 14px 0 0; }
-  #layers { width: 200px; top: 8px; right: 8px; padding: 8px; }
+  /* the side panel becomes a bottom sheet; tap its header to expand it */
+  #side { top: auto; bottom: 30px; left: 0; right: 0; width: auto; height: 46%; border-radius: 14px 14px 0 0; transition: height 0.2s; }
+  #side.expanded { height: calc(100% - 90px); }
+  #side > header, #side > section { padding: 8px 12px; }
+  #side > header { position: relative; cursor: pointer; padding-top: 14px; }
+  #side > header::before { content: ''; position: absolute; top: 5px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: rgba(255, 255, 255, 0.3); }
+  .brand { font-size: 15px; margin-bottom: 6px; }
+  #crawl-status { margin-top: 4px; }
+  #browse .row { margin-top: 6px; }
+  #list { margin: 6px -12px 0; }
+  #list li { padding: 7px 12px; }
+  #layers-btn { display: grid; place-items: center; top: 8px; right: 8px; width: 40px; height: 40px; padding: 0; border-radius: 50%; }
+  #layers { display: none; width: 220px; top: 56px; right: 8px; padding: 10px; }
+  #layers.open { display: block; }
   #compass { bottom: calc(46% + 40px); }
+  #side.expanded ~ #compass { display: none; }
   #status .attr { display: none; }
+  #cursor { min-width: 0; }
 }

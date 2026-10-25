@@ -31,7 +31,7 @@ async function addStats(routes, log) {
 }
 
 // unnamed routes are called after the summit or hut at their highest point, or the nearest village
-function nameRoutes(routes, pois = []) {
+export function nameRoutes(routes, pois = []) {
   const near = (pt, types, maxM) => {
     let best = null, bd = maxM;
     for (const p of pois) if (types.includes(p.type)) { const d = haversine(pt, p.at); if (d < bd) { bd = d; best = p; } }
@@ -47,7 +47,7 @@ function nameRoutes(routes, pois = []) {
 }
 
 // OSM often maps one ski tour as several unnamed ways: merge pieces that got the same name and lie close together
-function mergePieces(routes) {
+export function mergePieces(routes) {
   const out = [], groups = new Map();
   for (const r of routes) {
     if (!r.generic || r.kind !== 'skitour') { out.push(r); continue; }

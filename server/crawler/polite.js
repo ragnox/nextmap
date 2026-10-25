@@ -6,7 +6,7 @@ const AGENT = 'nextmap';
 const robotsCache = new Map();
 const lastHit = new Map();
 
-function parseRobots(text) {
+export function parseRobots(text) {
   const groups = []; let cur = null, lastWasAgent = false;
   for (let line of text.split(/\r?\n/)) {
     line = line.replace(/#.*/, '').trim();
@@ -22,7 +22,7 @@ function parseRobots(text) {
     if (k === 'allow' || k === 'disallow') cur.rules.push({ allow: k === 'allow', path: v });
     else if (k === 'crawl-delay') cur.delay = Number(v) || 0;
   }
-  const mine = groups.filter((g) => g.agents.some((a) => a !== '*' && AGENT.includes(a)));
+  const mine = groups.filter((g) => g.agents.some((a) => a && a !== '*' && AGENT.includes(a)));
   return mine.length ? mine : groups.filter((g) => g.agents.includes('*'));
 }
 
@@ -46,14 +46,18 @@ async function robotsFor(origin) {
   return robotsCache.get(origin);
 }
 
-export async function allowed(url) {
-  const u = new URL(url), groups = await robotsFor(u.origin);
-  if (groups === null) return { ok: false, delay: 0 };
-  const path = u.pathname + u.search;
+// the longest matching rule wins; on a tie Allow wins (as Google reads robots.txt)
+export function robotsAllows(groups, path) {
   let best = null;
   for (const g of groups) for (const r of g.rules)
     if (ruleMatches(r, path) && (!best || r.path.length > best.path.length || (r.path.length === best.path.length && r.allow))) best = r;
-  return { ok: !best || best.allow, delay: Math.max(0, ...groups.map((g) => g.delay)) };
+  return !best || best.allow;
+}
+
+export async function allowed(url) {
+  const u = new URL(url), groups = await robotsFor(u.origin);
+  if (groups === null) return { ok: false, delay: 0 };
+  return { ok: robotsAllows(groups, u.pathname + u.search), delay: Math.max(0, ...groups.map((g) => g.delay)) };
 }
 
 // fetch an HTML page politely; returns null when robots.txt forbids it or the page is missing
