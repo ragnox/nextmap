@@ -22,8 +22,6 @@ select option { background: #1d2228; }
 .row > input[type=search] { flex: 1; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--line); white-space: nowrap; }
-.chip.hike { border-color: var(--hike); color: #ffb39e; }
-.chip.skitour { border-color: var(--ski); color: #a9c8ff; }
 .chips label { font-size: 12px; display: flex; gap: 4px; align-items: center; padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px; }
 
 #side { position: fixed; top: 12px; left: 12px; bottom: 40px; width: 360px; display: flex; flex-direction: column;
@@ -44,6 +42,12 @@ select option { background: #1d2228; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: rgba(255, 210, 63, 0.18); color: #fff; font-weight: 600; }
 #count { margin-left: auto; }
+.kinds { display: flex; flex-wrap: wrap; gap: 5px; }
+.kinds button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 14px; font-size: 12.5px; background: none; }
+.kinds button i { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+.kinds button.on { background: rgba(255, 210, 63, 0.18); border-color: var(--accent); color: #fff; font-weight: 600; }
+.kinds button::after { content: attr(data-count); font-size: 10.5px; color: var(--muted); font-weight: 400; }
+.kinds button.none { opacity: 0.4; }
 #list { list-style: none; margin: 8px -14px 0; padding: 0; overflow-y: auto; flex: 1; }
 #list li { padding: 8px 14px; border-top: 1px solid rgba(255, 255, 255, 0.05); cursor: pointer; display: grid; grid-template-columns: 10px 1fr; gap: 2px 9px; }
 #list li:hover, #list li.hover { background: rgba(255, 255, 255, 0.07); }

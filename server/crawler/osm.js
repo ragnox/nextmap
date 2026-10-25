@@ -1,6 +1,7 @@
-// OpenStreetMap routes in the region via the Overpass API: hiking route relations and ski tours (route=ski relations
-// that are not pistes or cross-country trails, and anything tagged piste:type=skitour). Geometry is kept, clipped to
-// the region, so the routes can be drawn on the terrain.
+// OpenStreetMap routes in the region via the Overpass API: hiking and mountain-bike route relations, ski tours
+// (route=ski relations that are not pistes or cross-country trails, and anything tagged piste:type=skitour) and
+// freeride runs (downhill marked freeride, or ungroomed backcountry "Skirouten"). Geometry is kept, clipped to the
+// region, so the routes can be drawn on the terrain.
 import { fetchBuf } from '../util.js';
 import { simplify } from '../geo.js';
 
@@ -10,10 +11,12 @@ function query([w, s, e, n]) {
   const b = `${s},${w},${n},${e}`;
   return `[out:json][timeout:180];
 (
-  relation["type"="route"]["route"~"^(hiking|foot)$"](${b});
+  relation["type"="route"]["route"~"^(hiking|foot|mtb)$"](${b});
   relation["type"="route"]["route"="ski"](${b});
   relation["piste:type"="skitour"](${b});
   way["piste:type"="skitour"](${b});
+  nwr["piste:type"="downhill"]["piste:difficulty"="freeride"](${b});
+  nwr["piste:type"="downhill"]["piste:grooming"="backcountry"](${b});
 )->.r;
 .r out geom(${b});
 (
@@ -24,7 +27,7 @@ function query([w, s, e, n]) {
 .p out center tags;`;
 }
 
-export const NUMBERED = /^(?:wanderweg|weg|steig|route|trail|nr\.?)?\s*[a-z]{0,2}\s?\d+[a-z]?$/i;
+export const NUMBERED = /^(?:wanderweg|weg|steig|route|trail|nr\.?|mtb|mtb-route|bike)?\s*[a-z]{0,2}\s?\d+[a-z]?$/i;
 
 // geometry clipped to the bounding box has nulls where it leaves the box: split there
 export function pieces(geom) {
@@ -61,12 +64,16 @@ export function chain(ways) {
   return lines;
 }
 
+const EMTB = /\be[- ]?(mtb|bike|mountainbike)\b/i;
 export function kindOf(t) {
   if (t.route === 'hiking' || t.route === 'foot') return 'hike';
+  if (t.route === 'mtb') return EMTB.test(`${t.name || ''} ${t.description || ''}`) || t.e_bike === 'yes' || t.ebike === 'yes' ? 'emtb' : 'mtb';
   const pt = t['piste:type'];
+  if (pt === 'downhill' && (t['piste:difficulty'] === 'freeride' || t['piste:grooming'] === 'backcountry')) return 'freeride';
   if (pt === 'skitour' || (t.route === 'ski' && !pt)) return 'skitour';
-  return null;                                              // downhill pistes, nordic trails, sled runs
+  return null;                                              // groomed pistes, nordic trails, sled runs
 }
+const GENERIC = { skitour: 'Skitour', freeride: 'Freeride', mtb: 'MTB-Route', emtb: 'E-MTB-Route', hike: 'Wanderweg' };
 
 export async function crawlOsm(region, log) {
   let json = null, lastErr;
@@ -96,18 +103,19 @@ export async function crawlOsm(region, log) {
     let own = t.name || t['name:de'] || (t.from && t.to ? `${t.from} – ${t.to}` : null);
     // a trail number ("5", "26a", "Wanderweg 21") says nothing about where the route goes
     const numbered = own && NUMBERED.test(own.trim()) && !['iwn', 'nwn'].includes(t.network);
-    if (numbered && /^\d/.test(own.trim())) own = `Weg ${own.trim()}`;
-    const name = own || (kind === 'skitour' ? 'Skitour' : t.ref ? `Weg ${t.ref}` : 'Wanderweg');
+    if (numbered && /^\d/.test(own.trim())) own = `${kind === 'hike' ? 'Weg' : GENERIC[kind]} ${own.trim()}`;
+    const name = own || (kind === 'hike' && t.ref ? `Weg ${t.ref}` : t.ref ? `${GENERIC[kind]} ${t.ref}` : GENERIC[kind]);
     routes.push({
       id: `osm-${el.type[0]}${el.id}`, source: 'osm', kind, name, generic: !own || numbered,
       ref: t.ref || null, network: t.network || null, operator: t.operator || null,
-      difficulty: t.sac_scale || t['piste:difficulty'] || t['ski:difficulty'] || null,
+      difficulty: t.sac_scale || t['mtb:scale'] || t['mtb:scale:imba'] || t['piste:difficulty'] || t['ski:difficulty'] || null,
       from: t.from || null, to: t.to || null, description: t.description || t.note || null,
       url: `https://www.openstreetmap.org/${el.type}/${el.id}`, website: t.website || t.url || null,
       start: lines[0][0], lines,
     });
   }
   routes.pois = pois;
-  log(`Overpass: ${routes.length} routes (${routes.filter((r) => r.kind === 'hike').length} hiking, ${routes.filter((r) => r.kind === 'skitour').length} ski touring)`);
+  const n = (k) => routes.filter((r) => r.kind === k).length;
+  log(`Overpass: ${routes.length} routes (${n('hike')} hiking, ${n('mtb') + n('emtb')} bike, ${n('skitour')} ski touring, ${n('freeride')} freeride)`);
   return routes;
 }

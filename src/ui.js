@@ -5,8 +5,8 @@ import { haversine } from './geo.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const KIND_LABEL = { hike: 'Hiking', skitour: 'Ski touring', snowshoe: 'Snowshoe' };
-const SOURCE_LABEL = { osm: 'OpenStreetMap', bergfex: 'bergfex' };
+const KIND_LABEL = { hike: 'Hiking', bikehike: 'Bike & Hike', mtb: 'Mountain bike', emtb: 'eMTB', skitour: 'Ski touring', freeride: 'Freeride', snowshoe: 'Snowshoe' };
+const SOURCE_LABEL = { osm: 'OpenStreetMap', bergfex: 'bergfex', combined: 'combined' };
 const km = (m) => (m == null ? '–' : m >= 10000 ? `${(m / 1000).toFixed(0)} km` : `${(m / 1000).toFixed(1)} km`);
 const hm = (m) => (m == null ? '–' : `${Math.round(m).toLocaleString('de-AT')} m`);
 const hours = (h) => (h == null ? null : `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} h`);
@@ -58,7 +58,7 @@ export function createUI(app) {
     const trackNote = t && t.total && t.withTrack < t.total
       ? ` · bergfex tracks ${t.withTrack}/${t.total}${t.waitUntil ? `, more after ${clock(t.waitUntil)}` : t.running ? ', loading' : ''}` : '';
     $('crawl-status').textContent = !local
-      ? (state.all.length ? `${state.all.length} OpenStreetMap routes, collected ${new Date(data.updated || Object.values(data.sources)[0]?.crawled).toLocaleDateString('de-AT')}.` : 'No routes collected for this region yet.')
+      ? (state.all.length ? `${state.all.length} routes from OpenStreetMap, collected ${new Date(data.updated || Object.values(data.sources)[0]?.crawled).toLocaleDateString('de-AT')}.` : 'No routes collected for this region yet.')
       : state.all.length ? `${state.all.length} routes cached · ${srcs.join(' · ')}${trackNote}` : 'No routes for this region yet. Search the web to find some.';
     // tracks still arriving in the background: look again in a minute
     clearTimeout(state.trackTimer);
@@ -77,9 +77,16 @@ export function createUI(app) {
   function applyFilter() {
     const q = state.q.trim().toLowerCase();
     const near = state.inView || state.sort === 'near' ? inViewTest() : null;
-    let list = state.all.filter((r) => (state.kind === 'all' || r.kind === state.kind) &&
-      (!q || [r.name, r.ref, r.from, r.to, r.description, r.network].some((v) => v && String(v).toLowerCase().includes(q))) &&
+    const matching = state.all.filter((r) => (!q || [r.name, r.ref, r.from, r.to, r.description, r.network].some((v) => v && String(v).toLowerCase().includes(q))) &&
       (!state.inView || near(r)));
+    // how many of each kind the other filters leave; kinds with none are dimmed
+    const perKind = {};
+    for (const r of matching) perKind[r.kind] = (perKind[r.kind] || 0) + 1;
+    document.querySelectorAll('#kind-filter button').forEach((b) => {
+      const k = b.dataset.kind, n = k === 'all' ? matching.length : perKind[k] || 0;
+      b.dataset.count = n; b.classList.toggle('none', !n && k !== 'all');
+    });
+    let list = matching.filter((r) => state.kind === 'all' || r.kind === state.kind);
     const c = viewCenterLonLat();
     const key = {
       name: (r) => r.name.toLowerCase(), ascent: (r) => -Math.max(r.stats?.ascent ?? -1, r.stats?.descent ?? -1), length: (r) => -(r.stats?.length ?? -1),
@@ -102,7 +109,8 @@ export function createUI(app) {
     if (!list.length) { ul.innerHTML = `<li class="empty">${state.all.length ? 'No routes match.' : 'Nothing here yet — press “Search the web for routes”.'}</li>`; return; }
     ul.innerHTML = list.slice(0, 600).map((r, i) => {
       const s = r.stats || {};
-      const bits = [KIND_LABEL[r.kind], km(s.length), s.ascent != null ? `↑ ${hm(s.ascent)}${s.descent != null ? ` ↓ ${hm(s.descent)}` : ''}` : null, s.max ? `▲ ${hm(s.max)}` : null, r.difficulty, SOURCE_LABEL[r.source]].filter(Boolean);
+      const src = r.source === 'combined' ? [...new Set((r.parts || []).map((p) => SOURCE_LABEL[p.source] || p.source))].join(' + ') : SOURCE_LABEL[r.source];
+      const bits = [KIND_LABEL[r.kind], km(s.length), s.ascent != null ? `↑ ${hm(s.ascent)}${s.descent != null ? ` ↓ ${hm(s.descent)}` : ''}` : null, s.max ? `▲ ${hm(s.max)}` : null, r.difficulty, src].filter(Boolean);
       return `<li data-i="${i}"><span class="dot" style="background:${KIND_COLORS[r.kind] || '#999'}"></span><span class="name">${esc(r.name)}${r.ref && !r.name.includes(r.ref) ? ` <span class="muted">${esc(r.ref)}</span>` : ''}</span><span class="meta">${esc(bits.join(' · '))}</span></li>`;
     }).join('');
   }
@@ -128,7 +136,7 @@ export function createUI(app) {
     if (!r) { $('detail').hidden = true; $('browse').hidden = false; $('crawl-box').hidden = false; return; }
     $('browse').hidden = true; $('crawl-box').hidden = true; $('detail').hidden = false;
     $('d-name').textContent = r.name;
-    $('d-badges').innerHTML = [`<span class="chip ${r.kind}">${KIND_LABEL[r.kind] || r.kind}</span>`, `<span class="chip">${SOURCE_LABEL[r.source] || r.source}</span>`,
+    $('d-badges').innerHTML = [`<span class="chip" style="border-color:${KIND_COLORS[r.kind] || '#999'}">${KIND_LABEL[r.kind] || r.kind}</span>`, `<span class="chip">${SOURCE_LABEL[r.source] || r.source}</span>`,
       r.ref ? `<span class="chip">${esc(r.ref)}</span>` : '', r.network ? `<span class="chip">${esc({ iwn: 'international', nwn: 'national', rwn: 'regional', lwn: 'local' }[r.network] || r.network)}</span>` : '',
       r.difficulty ? `<span class="chip">${esc(r.difficulty)}</span>` : ''].join('');
     renderStats(r.stats || {});
@@ -203,7 +211,9 @@ export function createUI(app) {
   });
 
   function renderActions(r) {
-    const acts = [`<button id="d-zoom">Zoom to route</button>`, `<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on ${SOURCE_LABEL[r.source] || 'source'} ↗</a>`];
+    const acts = [`<button id="d-zoom">Zoom to route</button>`];
+    if (r.kind === 'bikehike' && Array.isArray(r.parts)) for (const p of r.parts) acts.push(`<a href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(p.name)}">${p.role === 'bike' ? 'Bike route' : 'Hiking route'} on ${SOURCE_LABEL[p.source] || 'source'} ↗</a>`);
+    else acts.push(`<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on ${SOURCE_LABEL[r.source] || 'source'} ↗</a>`);
     if (r.website) acts.push(`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website ↗</a>`);
     if (r.lines) acts.push(`<button id="d-gpx">GPX</button>`);
     const bf = r.id.match(/^bergfex-(\d+)$/);

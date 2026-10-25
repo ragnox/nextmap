@@ -4,6 +4,7 @@ import { parseRobots, robotsAllows } from '../server/crawler/polite.js';
 import { parseTour, parseGpx } from '../server/crawler/bergfex.js';
 import { pieces, chain, kindOf, NUMBERED } from '../server/crawler/osm.js';
 import { nameRoutes, mergePieces } from '../server/crawler/index.js';
+import { bikeAndHike } from '../server/crawler/bikehike.js';
 
 test('robots.txt: our own group beats *, longest rule wins, wildcards', () => {
   const groups = parseRobots(`
@@ -71,6 +72,11 @@ test('OSM: what counts as a hiking route, a ski tour, a bare trail number', () =
   assert.equal(kindOf({ route: 'ski', 'piste:type': 'nordic' }), null);
   assert.equal(kindOf({ 'piste:type': 'skitour' }), 'skitour');
   assert.equal(kindOf({ 'piste:type': 'downhill' }), null);
+  assert.equal(kindOf({ route: 'mtb', name: 'Zillertaler Höhenstraße' }), 'mtb');
+  assert.equal(kindOf({ route: 'mtb', name: 'E-MTB Runde Gerlos' }), 'emtb');
+  assert.equal(kindOf({ route: 'mtb', e_bike: 'yes' }), 'emtb');
+  assert.equal(kindOf({ 'piste:type': 'downhill', 'piste:difficulty': 'freeride' }), 'freeride');
+  assert.equal(kindOf({ 'piste:type': 'downhill', 'piste:grooming': 'backcountry' }), 'freeride');
   for (const n of ['5', '26a', 'Wanderweg 21', 'Weg 11', 'AW 05']) assert.ok(NUMBERED.test(n), n);
   for (const n of ['Zillerpromenade 1', 'Adlerweg', 'Berliner Höhenweg Etappe 3']) assert.ok(!NUMBERED.test(n), n);
 });
@@ -94,4 +100,21 @@ test('unnamed routes take the summit at their top, split ski tours merge', () =>
   assert.equal(rk.lines.length, 2);
   assert.equal(rk.stats.max, 2762);
   assert.equal(rk.stats.length, 6000);
+});
+
+test('Bike & Hike: ride to the top of a bike route, walk on to a summit above it', () => {
+  const pois = [{ type: 'peak', name: 'Gipfel', ele: 2500, at: [11.81, 47.21] }, { type: 'peak', name: 'Hügel', ele: 1850, at: [11.79, 47.18] }];
+  const bike = { id: 'osm-r1', source: 'osm', kind: 'mtb', name: 'Almrunde', url: 'u1', start: [11.79, 47.19],
+    lines: [[[11.79, 47.19], [11.80, 47.20]]], top: [11.80, 47.20, 1800], stats: { length: 3000 } };
+  const hike = { id: 'osm-r2', source: 'osm', kind: 'hike', name: 'Gipfelweg', url: 'u2',
+    lines: [[[11.795, 47.195], [11.8001, 47.2001], [11.805, 47.205], [11.81, 47.21]]], top: [11.81, 47.21, 2500] };
+  const low = { id: 'osm-r3', source: 'osm', kind: 'hike', name: 'Hügelweg', url: 'u3',
+    lines: [[[11.8, 47.2], [11.79, 47.18]]], top: [11.79, 47.18, 1850] };
+  const out = bikeAndHike([bike, hike, low], pois);
+  assert.equal(out.length, 1, 'the low hill is not worth leaving the bike for');
+  const [c] = out;
+  assert.equal(c.kind, 'bikehike'); assert.equal(c.goal.name, 'Gipfel'); assert.equal(c.name, 'Gipfel – Almrunde');
+  assert.deepEqual(c.lines.at(-1), [[11.8001, 47.2001], [11.805, 47.205], [11.81, 47.21]], 'the walk starts where the ride ends');
+  assert.deepEqual(c.parts.map((p) => [p.role, p.id]), [['bike', 'osm-r1'], ['hike', 'osm-r2']]);
+  assert.equal(bikeAndHike([bike, hike], []).length, 0, 'no summit or hut at the top: no tour');
 });

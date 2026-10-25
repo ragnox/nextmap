@@ -2,7 +2,10 @@
 // Routes with a track draw as lines; routes known only by their start (crawled web pages) draw as dots.
 import { HALF, tileSize, lonToX, latToY, xToLon, yToLat } from './geo.js';
 
-export const KIND_COLORS = { hike: '#ff5a2e', skitour: '#2a7bff', snowshoe: '#9b59ff' };
+export const KIND_COLORS = {
+  hike: '#ff5a2e', bikehike: '#19d66b', mtb: '#ff2bd6', emtb: '#00e0ff',
+  skitour: '#2a7bff', freeride: '#b04dff', snowshoe: '#8fa8ff',
+};
 
 export class RouteLayer {
   constructor() {
@@ -39,9 +42,20 @@ export class RouteLayer {
     const w = z < 11 ? 1.6 : z < 13 ? 2.4 : z < 15 ? 3.2 : 4.2;
     let any = false;
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    const path = (r) => {
+    const path = (r, lines = r._m) => {
       ctx.beginPath();
-      for (const l of r._m) l.forEach((p, i) => { const [a, b] = P(p); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); });
+      for (const l of lines) l.forEach((p, i) => { const [a, b] = P(p); i ? ctx.lineTo(a, b) : ctx.moveTo(a, b); });
+    };
+    // Bike & Hike: the ride solid, the walk on from where the bike stays dashed
+    const stroke = (r, width, style, halo) => {
+      const split = r.kind === 'bikehike' && r._m.length > 1;
+      const parts = split ? [[r._m.slice(0, -1), []], [r._m.slice(-1), [width * 1.6, width * 1.4]]] : [[r._m, []]];
+      for (const [lines, dash] of parts) {
+        path(r, lines);
+        ctx.setLineDash(halo ? [] : dash);
+        ctx.strokeStyle = style; ctx.lineWidth = width; ctx.stroke();
+      }
+      ctx.setLineDash([]);
     };
     const dot = (r, rad) => { const [a, b] = P(r._s); ctx.beginPath(); ctx.arc(a, b, rad, 0, Math.PI * 2); };
     const special = new Set([this.selected, this.hovered]);
@@ -50,9 +64,8 @@ export class RouteLayer {
       any = true;
       const col = KIND_COLORS[r.kind] || '#ff5a2e';
       if (r._m.length) {
-        path(r);
-        ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = w + 1.6; ctx.stroke();
-        ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
+        stroke(r, w + 1.6, 'rgba(255,255,255,0.55)', true);
+        stroke(r, w, col);
       } else if (r._s) {
         dot(r, w + 2.5);
         ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
@@ -63,9 +76,8 @@ export class RouteLayer {
       any = true;
       const sel = r === this.selected;
       if (r._m.length) {
-        path(r);
-        ctx.strokeStyle = 'rgba(20,20,20,0.85)'; ctx.lineWidth = w * 2 + 3; ctx.stroke();
-        ctx.strokeStyle = sel ? '#ffd23f' : '#ffffff'; ctx.lineWidth = w * 2; ctx.stroke();
+        stroke(r, w * 2 + 3, 'rgba(20,20,20,0.85)', true);
+        stroke(r, w * 2, sel ? '#ffd23f' : '#ffffff');
       }
       if (r._s) {
         dot(r, w * 2 + 4);

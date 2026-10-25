@@ -1,4 +1,4 @@
-// bergfex.at tour listings for the region (hiking and ski touring), crawled within robots.txt with a pause between
+// bergfex.at tour listings for the region (hiking, mountain bike, E-MTB, ski touring, freeride), crawled within robots.txt with a pause between
 // requests. Tour pages give the start point, duration, ascent, length, altitude range and difficulty; each tour's GPX
 // track comes from bergfex's download link. Should bergfex ever ask for a login there, put your session cookie in
 // the BERGFEX_COOKIE environment variable and it is sent with those downloads.
@@ -8,7 +8,10 @@ import { simplify } from '../geo.js';
 const BASE = 'https://www.bergfex.at';
 const CATEGORIES = [
   { path: 'wandern', kind: 'hike', maxPages: 8 },
+  { path: 'mountainbike', kind: 'mtb', maxPages: 8 },
+  { path: 'e-mtb', kind: 'emtb', maxPages: 4 },
   { path: 'skitour', kind: 'skitour', maxPages: 15 },
+  { path: 'freeride', kind: 'freeride', maxPages: 3 },
 ];
 
 const decode = (s) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ');
@@ -19,7 +22,10 @@ const meta = (html, name) => {
   return m ? decode(m[1]) : null;
 };
 
-const KIND_BY_TYPE = { wanderung: 'hike', bergtour: 'hike', hochtour: 'hike', klettersteig: 'hike', 'alpine-tour': 'hike', skitour: 'skitour', schneeschuh: 'snowshoe', 'schneeschuhwanderung': 'snowshoe', winterwanderung: 'hike' };
+const KIND_BY_TYPE = {
+  wanderung: 'hike', bergtour: 'hike', hochtour: 'hike', klettersteig: 'hike', 'alpine-tour': 'hike', winterwanderung: 'hike',
+  mountainbike: 'mtb', 'e-mtb': 'emtb', 'e-bike': 'emtb', skitour: 'skitour', freeride: 'freeride', schneeschuh: 'snowshoe', schneeschuhwanderung: 'snowshoe',
+};
 
 export function parseTour(html, url, type) {
   const geo = meta(html, 'geoposition');

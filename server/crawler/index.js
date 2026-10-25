@@ -7,6 +7,7 @@ import { crawlOsm } from './osm.js';
 import { crawlBergfex, fetchTrack, parseGpx, gpxUrl } from './bergfex.js';
 import { RateLimited, blockedUntil } from './polite.js';
 import { simplify } from '../geo.js';
+import { bikeAndHike, COMBINE_VERSION } from './bikehike.js';
 
 export const SOURCES = {
   osm: { label: 'OpenStreetMap', run: crawlOsm },
@@ -43,13 +44,16 @@ export function remeasure(slug) {
   if (remeasuring.has(slug)) return;
   remeasuring.add(slug);
   withStore(slug, async (store) => {
-    if (!store || store.statsVersion === STATS_VERSION) return undefined;
-    for (const r of store.routes) if (r.lines) { try { await measure(r); } catch { /* keep the old numbers */ } }
-    store.statsVersion = STATS_VERSION;
+    if (!needsRemeasure(store)) return undefined;
+    if (store.statsVersion !== STATS_VERSION) {
+      for (const r of store.routes) if (r.lines) { try { await measure(r); } catch { /* keep the old numbers */ } }
+      store.statsVersion = STATS_VERSION;
+    }
+    if (store.pois) await recombine(store);                   // the Bike & Hike rules changed
     return true;
   }).catch((e) => console.warn('remeasure', slug, e.message)).finally(() => remeasuring.delete(slug));
 }
-export const needsRemeasure = (store) => store?.routes?.length && store.statsVersion !== STATS_VERSION;
+export const needsRemeasure = (store) => store?.routes?.length && (store.statsVersion !== STATS_VERSION || (store.pois && store.combineVersion !== COMBINE_VERSION));
 
 // length, climb and altitudes of a route's track on the DGM (a source's walking time is kept)
 async function measure(r) {
@@ -131,6 +135,8 @@ export function backfillTracks(slug) {
         return x;
       });
     }
+    // new bike tracks may make new Bike & Hike tours
+    await withStore(slug, async (s) => { if (s) await recombine(s); return s ? true : undefined; });
     st.running = false; st.waitUntil = 0;
   })().catch((e) => { console.warn('track backfill', slug, e.message); st.running = false; });
 }
@@ -151,11 +157,22 @@ export function nameRoutes(routes, pois = []) {
   }
 }
 
+// Bike & Hike tours from the region's bike and hiking routes, measured like the others
+async function recombine(store, log = () => {}) {
+  const base = store.routes.filter((r) => r.source !== 'combined');
+  const combos = bikeAndHike(base, store.pois || []);
+  for (const r of combos) { try { await measure(r); } catch { /* left without numbers */ } }
+  store.routes = base.concat(combos);
+  store.sources.combined = { label: 'Bike & Hike (combined)', count: combos.length, crawled: new Date().toISOString() };
+  store.combineVersion = COMBINE_VERSION;
+  log(`Bike & Hike: ${combos.length} tours combined from bike and hiking routes`);
+}
+
 // OSM often maps one ski tour as several unnamed ways: merge pieces that got the same name and lie close together
 export function mergePieces(routes) {
   const out = [], groups = new Map();
   for (const r of routes) {
-    if (!r.generic || r.kind !== 'skitour') { out.push(r); continue; }
+    if (!r.generic || (r.kind !== 'skitour' && r.kind !== 'freeride')) { out.push(r); continue; }
     const g = groups.get(r.name) || []; groups.set(r.name, g); g.push(r);
   }
   for (const g of groups.values()) {
@@ -204,6 +221,7 @@ export function startCrawl(regionName, sourceIds = Object.keys(SOURCES)) {
       src.state = 'running';
       try {
         let routes = await S.run(region, log, (partial) => { src.found = partial.length; save(src.id, partial); });
+        if (routes.pois) store.pois = routes.pois;           // peaks and huts, for naming and Bike & Hike
         if (routes.some((r) => r.lines)) {
           src.state = 'measuring'; await addStats(routes, log); nameRoutes(routes, routes.pois);
           routes = mergePieces(routes);
@@ -215,6 +233,8 @@ export function startCrawl(regionName, sourceIds = Object.keys(SOURCES)) {
         src.state = 'failed'; src.error = e.message; log(`${S.label} failed: ${e.message}`);
       }
     }
+    await recombine(store, log);
+    await writeJSON(fileOf(region.slug), store);
     job.state = 'done'; job.finished = Date.now();
     log(`Done: ${store.routes.length} routes for ${region.name}`);
     if (store.routes.some((r) => r.source === 'bergfex' && !r.lines)) backfillTracks(region.slug);
