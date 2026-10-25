@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nextmap · Tirol 3D</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 14 L6 4 L9 9 L11 6 L15 14 Z' fill='%23ffd23f'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="view"></div>
+
+<aside id="side">
+  <header>
+    <div class="brand"><span class="logo">▲</span> nextmap <small>Tirol 3D</small></div>
+    <form id="region-form" autocomplete="off">
+      <input id="region" list="region-list" value="Zillertal" placeholder="Region, valley or place" aria-label="Region">
+      <datalist id="region-list"></datalist>
+      <button type="submit" title="Go to region">Go</button>
+    </form>
+  </header>
+
+  <section id="crawl-box">
+    <div class="row">
+      <button id="crawl" class="primary">Search the web for routes</button>
+      <button id="crawl-toggle" class="ghost" title="Sources and log">⋯</button>
+    </div>
+    <div id="crawl-more" hidden>
+      <div id="crawl-sources" class="chips"></div>
+      <div class="small muted">Crawls OpenStreetMap (hiking and ski-touring routes with tracks) and route sites that allow crawling in their robots.txt, one page at a time. Results are cached.</div>
+    </div>
+    <div id="crawl-status" class="small muted"></div>
+    <ol id="crawl-log" hidden></ol>
+  </section>
+
+  <section id="browse">
+    <div class="seg" id="kind-filter">
+      <button data-kind="all" class="on">All</button>
+      <button data-kind="hike">Hiking</button>
+      <button data-kind="skitour">Ski touring</button>
+    </div>
+    <div class="row">
+      <input id="q" type="search" placeholder="Filter by name, peak, hut…" aria-label="Filter routes">
+      <select id="sort" aria-label="Sort">
+        <option value="near">Nearest to view</option>
+        <option value="name">Name</option>
+        <option value="ascent">Ascent</option>
+        <option value="length">Length</option>
+        <option value="max">Highest point</option>
+      </select>
+    </div>
+    <div class="row small">
+      <label><input type="checkbox" id="in-view"> Only in view</label>
+      <span id="count" class="muted"></span>
+    </div>
+    <ul id="list"></ul>
+  </section>
+
+  <section id="detail" hidden>
+    <button id="back" class="ghost">← Routes</button>
+    <h2 id="d-name"></h2>
+    <div id="d-badges" class="chips"></div>
+    <div id="d-stats" class="stats"></div>
+    <canvas id="profile" width="680" height="200" hidden></canvas>
+    <div id="d-profile-note" class="small muted"></div>
+    <p id="d-desc"></p>
+    <img id="d-img" alt="" hidden>
+    <div class="row" id="d-actions"></div>
+  </section>
+</aside>
+
+<div id="layers" class="panel">
+  <div class="seg" id="season">
+    <button data-season="summer" class="on">☀ Summer</button>
+    <button data-season="winter">❄ Winter</button>
+  </div>
+  <label class="field">Imagery
+    <select id="imagery">
+      <option value="ortho">Orthophoto · basemap.at</option>
+      <option value="tiris">Orthophoto · Land Tirol 20 cm</option>
+      <option value="s2">Sentinel-2 · current season</option>
+    </select>
+  </label>
+  <div id="s2-info" class="small muted"></div>
+  <div class="checks">
+    <label><input type="checkbox" id="l-routes" checked> Routes</label>
+    <label><input type="checkbox" id="l-slope"> Slope angle</label>
+    <label><input type="checkbox" id="l-contours"> Contours</label>
+    <label><input type="checkbox" data-tiris="bergwege"> Mountain trails (Land Tirol)</label>
+    <label><input type="checkbox" data-tiris="wildschutz"> Wildlife &amp; forest zones</label>
+    <label><input type="checkbox" data-tiris="lifte"> Lifts</label>
+  </div>
+  <div id="slope-legend" class="legend" hidden>
+    <span style="--c:#bfe65a">27°</span><span style="--c:#ffdb1a">30°</span><span style="--c:#ff850d">35°</span><span style="--c:#e61f1a">40°</span><span style="--c:#8c33bf">45°+</span>
+  </div>
+  <label class="field">Sun <input type="range" id="sun" min="0" max="100" value="45"></label>
+</div>
+
+<button id="compass" class="panel" title="North up">
+  <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2 L16 13 L12 11 L8 13 Z" fill="#e8462e"/><path d="M12 22 L8 11 L12 13 L16 11 Z" fill="#ddd"/></svg>
+</button>
+
+<div id="status">
+  <span id="cursor"></span>
+  <span id="loading"></span>
+  <span class="attr">Terrain &amp; orthophoto: Land Tirol (tiris, CC BY 4.0) · basemap.at · Copernicus Sentinel-2 via Planetary Computer · EOX s2cloudless · Mapzen Terrain Tiles · © OpenStreetMap contributors · bergfex.at</span>
+</div>
+
+<div id="tooltip" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
