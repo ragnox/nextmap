@@ -6,7 +6,7 @@ import { politeGet, RateLimited } from './polite.js';
 import { simplify } from '../geo.js';
 
 const BASE = 'https://www.bergfex.at';
-const CATEGORIES = [
+export const CATEGORIES = [
   { path: 'wandern', kind: 'hike', maxPages: 8 },
   { path: 'mountainbike', kind: 'mtb', maxPages: 8 },
   { path: 'e-mtb', kind: 'emtb', maxPages: 4 },
@@ -80,21 +80,26 @@ export async function fetchTrack(id) {
   return lines.length ? lines : null;
 }
 
-export async function crawlBergfex(region, log, onRoutes) {
-  const slug = region.bergfex || region.slug;
+// region.bergfex: bergfex's name(s) for the area, one or several (a preset can span several bergfex regions);
+// opts.categories: only these listings (e.g. ['e-mtb']), otherwise all
+export async function crawlBergfex(region, log, onRoutes, opts = {}) {
+  const slugs = [region.bergfex || region.slug].flat();
+  const cats = opts.categories ? CATEGORIES.filter((c) => opts.categories.includes(c.path)) : CATEGORIES;
   const [w, s, e, n] = region.bbox, pad = 0.05;
   const inside = ([lon, lat]) => lon > w - pad && lon < e + pad && lat > s - pad && lat < n + pad;
   const routes = [], seen = new Set();
-  for (const cat of CATEGORIES) {
+  for (const cat of cats) {
     const links = [];
-    for (let page = 1; page <= cat.maxPages; page++) {
-      const url = `${BASE}/sommer/${slug}/touren/${cat.path}/${page > 1 ? `?page=${page}` : ''}`;
-      const html = await politeGet(url, { cacheKey: `web/bergfex/list-${slug}-${cat.path}-${page}.html`, maxAgeMs: 3 * 86400e3 });
-      if (!html) { if (page === 1) log(`bergfex: no ${cat.path} listing for "${slug}"`); break; }
-      const found = [...html.matchAll(/href="(\/sommer\/[a-z0-9-]+\/touren\/([a-z0-9-]+)\/(\d+),[^"]*\/)"/g)].filter((m) => !seen.has(m[3]));
-      found.forEach((m) => { seen.add(m[3]); links.push({ url: BASE + m[1], type: m[2] }); });
-      log(`bergfex ${cat.path}: page ${page}, ${links.length} tours so far`);
-      if (!found.length || !html.includes(`page=${page + 1}`)) break;
+    for (const slug of slugs) {
+      for (let page = 1; page <= cat.maxPages; page++) {
+        const url = `${BASE}/sommer/${slug}/touren/${cat.path}/${page > 1 ? `?page=${page}` : ''}`;
+        const html = await politeGet(url, { cacheKey: `web/bergfex/list-${slug}-${cat.path}-${page}.html`, maxAgeMs: 3 * 86400e3 });
+        if (!html) { if (page === 1) log(`bergfex: no ${cat.path} listing for "${slug}"`); break; }
+        const found = [...html.matchAll(/href="(\/sommer\/[a-z0-9-]+\/touren\/([a-z0-9-]+)\/(\d+),[^"]*\/)"/g)].filter((m) => !seen.has(m[3]));
+        found.forEach((m) => { seen.add(m[3]); links.push({ url: BASE + m[1], type: m[2] }); });
+        log(`bergfex ${cat.path} (${slug}): page ${page}, ${links.length} tours so far`);
+        if (!found.length || !html.includes(`page=${page + 1}`)) break;
+      }
     }
     let kept = 0, tracks = 0, limited = false;
     for (const [i, l] of links.entries()) {
@@ -102,6 +107,7 @@ export async function crawlBergfex(region, log, onRoutes) {
       const html = await politeGet(l.url, { cacheKey: `web/bergfex/tour-${id}.html` });
       const r = html && parseTour(html, l.url, l.type);
       if (r && inside(r.start)) {
+        r.category = cat.path;
         r.lines = await fetchTrack(id).catch((e) => {
           if (e instanceof RateLimited && !limited) { limited = true; log(`bergfex track downloads: ${e.message}; the rest follow in the background`); }
           return null;

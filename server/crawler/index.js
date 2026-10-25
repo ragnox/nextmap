@@ -4,7 +4,7 @@ import { readJSON, writeJSON } from '../util.js';
 import { profile, haversine } from '../geo.js';
 import { resolveRegion } from './regions.js';
 import { crawlOsm } from './osm.js';
-import { crawlBergfex, fetchTrack, parseGpx, gpxUrl } from './bergfex.js';
+import { crawlBergfex, fetchTrack, parseGpx, gpxUrl, CATEGORIES as BERGFEX_CATEGORIES } from './bergfex.js';
 import { RateLimited, blockedUntil } from './polite.js';
 import { simplify } from '../geo.js';
 import { bikeAndHike, COMBINE_VERSION } from './bikehike.js';
@@ -198,9 +198,21 @@ export function mergePieces(routes) {
   return out;
 }
 
+// a source's routes after a fresh crawl; a crawl of only some bergfex categories ("bergfex:e-mtb") replaces only those
+export function replaceSource(existing, source, fresh, categories) {
+  const kinds = new Set((categories || []).map((c) => BERGFEX_CATEGORIES.find((x) => x.path === c)?.kind));
+  const stays = (r) => r.source !== source || (categories && !(r.category ? categories.includes(r.category) : kinds.has(r.kind)));
+  return existing.filter(stays).concat(fresh);
+}
+
+// sourceIds: "osm", "bergfex", or "bergfex:e-mtb,freeride" for some of bergfex's categories
 export function startCrawl(regionName, sourceIds = Object.keys(SOURCES)) {
   if (job && job.state === 'running') return job;
-  job = { state: 'running', region: regionName, sources: sourceIds.map((id) => ({ id, label: SOURCES[id]?.label || id, state: 'waiting', found: 0 })), log: [], started: Date.now() };
+  const specs = sourceIds.map((spec) => { const [id, cats] = String(spec).split(':'); return { id, categories: cats ? cats.split(',') : null }; });
+  job = {
+    state: 'running', region: regionName, log: [], started: Date.now(),
+    sources: specs.map(({ id, categories }) => ({ id, categories, label: (SOURCES[id]?.label || id) + (categories ? ` (${categories.join(', ')})` : ''), state: 'waiting', found: 0 })),
+  };
   const log = (msg) => { job.log.push({ t: Date.now(), msg }); console.log('[crawl]', msg); };
   (async () => {
     const region = await resolveRegion(regionName);
@@ -209,9 +221,9 @@ export function startCrawl(regionName, sourceIds = Object.keys(SOURCES)) {
     log(`Region ${region.name}: ${region.bbox.join(', ')}`);
     const store = (await loadRoutes(region.slug)) || { region: region.name, slug: region.slug, bbox: region.bbox, view: region.view, sources: {}, routes: [], statsVersion: STATS_VERSION };
     store.bbox = region.bbox; store.view = region.view;
-    const save = async (srcId, routes) => {
-      store.routes = store.routes.filter((r) => r.source !== srcId).concat(routes);
-      store.sources[srcId] = { label: SOURCES[srcId].label, count: routes.length, crawled: new Date().toISOString() };
+    const save = async (srcId, routes, categories) => {
+      store.routes = replaceSource(store.routes, srcId, routes, categories);
+      store.sources[srcId] = { label: SOURCES[srcId].label, count: store.routes.filter((r) => r.source === srcId).length, crawled: new Date().toISOString() };
       store.updated = new Date().toISOString();
       await writeJSON(fileOf(region.slug), store);
     };
@@ -220,14 +232,14 @@ export function startCrawl(regionName, sourceIds = Object.keys(SOURCES)) {
       if (!S) { src.state = 'unknown'; continue; }
       src.state = 'running';
       try {
-        let routes = await S.run(region, log, (partial) => { src.found = partial.length; save(src.id, partial); });
+        let routes = await S.run(region, log, (partial) => { src.found = partial.length; save(src.id, partial, src.categories); }, { categories: src.categories });
         if (routes.pois) store.pois = routes.pois;           // peaks and huts, for naming and Bike & Hike
         if (routes.some((r) => r.lines)) {
           src.state = 'measuring'; await addStats(routes, log); nameRoutes(routes, routes.pois);
           routes = mergePieces(routes);
         }
         src.found = routes.length;
-        await save(src.id, routes);
+        await save(src.id, routes, src.categories);
         src.state = 'done';
       } catch (e) {
         src.state = 'failed'; src.error = e.message; log(`${S.label} failed: ${e.message}`);

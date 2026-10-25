@@ -22,7 +22,7 @@ npm start
 
 Then open http://localhost:5173. `npm run dev` rebuilds the frontend and restarts the server on changes.
 
-Crawl from the shell instead of the button: `npm run crawl -- "Zillertal"` (or `npm run crawl -- "Stubaital" osm`).
+Crawl from the shell instead of the button: `npm run crawl -- "Zillertal"` (or `npm run crawl -- "Stubaital" osm`). A source can be limited to some of bergfex's categories, e.g. `npm run crawl -- "Osttirol" bergfex:e-mtb`; that crawl replaces only those tours. Presets can name several bergfex areas, since bergfex's regions are often smaller (Karwendel covers Achensee, Silberregion Karwendel, Seefeld and Innsbruck).
 
 `npm test` runs the unit tests (robots.txt rules, the bergfex page and GPX parsers, OSM line chaining and route naming, projections and tile maths).
 

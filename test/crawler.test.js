@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseRobots, robotsAllows } from '../server/crawler/polite.js';
 import { parseTour, parseGpx } from '../server/crawler/bergfex.js';
 import { pieces, chain, kindOf, NUMBERED } from '../server/crawler/osm.js';
-import { nameRoutes, mergePieces } from '../server/crawler/index.js';
+import { nameRoutes, mergePieces, replaceSource } from '../server/crawler/index.js';
 import { bikeAndHike } from '../server/crawler/bikehike.js';
 
 test('robots.txt: our own group beats *, longest rule wins, wildcards', () => {
@@ -117,4 +117,16 @@ test('Bike & Hike: ride to the top of a bike route, walk on to a summit above it
   assert.deepEqual(c.lines.at(-1), [[11.8001, 47.2001], [11.805, 47.205], [11.81, 47.21]], 'the walk starts where the ride ends');
   assert.deepEqual(c.parts.map((p) => [p.role, p.id]), [['bike', 'osm-r1'], ['hike', 'osm-r2']]);
   assert.equal(bikeAndHike([bike, hike], []).length, 0, 'no summit or hut at the top: no tour');
+});
+
+test('a crawl of some bergfex categories replaces only those', () => {
+  const existing = [
+    { id: 'osm-1', source: 'osm', kind: 'mtb' },
+    { id: 'bergfex-1', source: 'bergfex', kind: 'hike', category: 'wandern' },
+    { id: 'bergfex-2', source: 'bergfex', kind: 'emtb', category: 'e-mtb' },
+    { id: 'bergfex-3', source: 'bergfex', kind: 'emtb' },                        // crawled before categories were kept
+  ];
+  const fresh = [{ id: 'bergfex-9', source: 'bergfex', kind: 'emtb', category: 'e-mtb' }];
+  assert.deepEqual(replaceSource(existing, 'bergfex', fresh, ['e-mtb']).map((r) => r.id), ['osm-1', 'bergfex-1', 'bergfex-9']);
+  assert.deepEqual(replaceSource(existing, 'bergfex', fresh).map((r) => r.id), ['osm-1', 'bergfex-9'], 'a full crawl replaces all of the source');
 });
