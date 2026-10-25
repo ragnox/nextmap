@@ -37,12 +37,6 @@ const gray = (() => {
   const t = new THREE.DataTexture(new Uint8Array([128, 128, 120, 255]), 1, 1); t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true; return t;
 })();
 
-async function bitmap(url, signal) {
-  const res = await fetch(url, { signal });
-  if (res.status === 204) return null;
-  if (!res.ok) throw new Error(`${res.status} ${url}`);
-  return createImageBitmap(await res.blob(), { imageOrientation: 'none', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-}
 
 class Tile {
   constructor(tm, z, x, y, parent) {
@@ -75,8 +69,8 @@ function xfTo(node, src, v) {
 }
 
 export class Terrain {
-  constructor(renderer, scene, frame) {
-    this.renderer = renderer; this.scene = scene; this.frame = frame;
+  constructor(renderer, scene, frame, backend) {
+    this.renderer = renderer; this.scene = scene; this.frame = frame; this.backend = backend;
     this.geo = gridGeometry();
     this.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     this.pool = []; this.frameNo = 0; this.loading = 0; this.tileCount = 0;
@@ -185,7 +179,7 @@ export class Terrain {
     t.state = 1; this.loading++;
     try {
       const [buf] = await Promise.all([
-        fetch(`/api/dem/${t.z}/${t.x}/${t.y}`).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
+        this.backend.demTile(t.z, t.x, t.y),
         this.loadImagery(t),
       ]);
       const dem = new Float32Array(buf);
@@ -222,13 +216,13 @@ export class Terrain {
     const layer = this.imageryLayer();
     let canvas;
     if (t.z < 11) {
-      const b = await bitmap(`/api/img/${layer}/${t.z}/${t.x}/${t.y}`).catch(() => null);
+      const b = await this.backend.imagery(layer, t.z, t.x, t.y).catch(() => null);
       canvas = b;
     } else {
       canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
       const ctx = canvas.getContext('2d');
       await Promise.all([0, 1, 2, 3].map(async (i) => {
-        const b = await bitmap(`/api/img/${layer}/${t.z + 1}/${t.x * 2 + (i & 1)}/${t.y * 2 + (i >> 1)}`).catch(() => null);
+        const b = await this.backend.imagery(layer, t.z + 1, t.x * 2 + (i & 1), t.y * 2 + (i >> 1)).catch(() => null);
         if (b) { ctx.drawImage(b, (i & 1) * 256, (i >> 1) * 256); b.close(); }
       }));
     }
@@ -247,12 +241,21 @@ export class Terrain {
     return tex;
   }
 
+  // raw RGBA (Sentinel-2 composed in the browser): alpha carries the snow fraction, so no canvas in between
+  rgbaTexture(rgba) {
+    const tex = new THREE.DataTexture(rgba, 256, 256, THREE.RGBAFormat);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = this.anisotropy;
+    tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter; tex.generateMipmaps = true;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
   async loadS2(t, season, sid) {
     t.s2[season] = { state: 1 };
     try {
-      const b = await bitmap(`/api/s2tile/${sid}/${t.z}/${t.x}/${t.y}`);
+      const s = await this.backend.s2Tile(sid, t.z, t.x, t.y);
       if (this.s2Scenes[season] !== sid) return;
-      t.s2[season] = { state: 2, tex: b && b.width > 1 ? this.texture(b) : null };
+      t.s2[season] = { state: 2, tex: !s ? null : s.bitmap ? this.texture(s.bitmap) : this.rgbaTexture(s.rgba) };
     } catch (e) {
       t.s2[season] = { state: 3 };
       setTimeout(() => { if (t.s2[season]?.state === 3) delete t.s2[season]; }, 10000);
@@ -264,7 +267,7 @@ export class Terrain {
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
     const ctx = canvas.getContext('2d');
     await Promise.all([0, 1, 2, 3].map(async (i) => {
-      const b = await bitmap(`/api/img/over/${t.z + 1}/${t.x * 2 + (i & 1)}/${t.y * 2 + (i >> 1)}?l=${key}`).catch(() => null);
+      const b = await this.backend.imagery('over', t.z + 1, t.x * 2 + (i & 1), t.y * 2 + (i >> 1), key).catch(() => null);
       if (b) { ctx.drawImage(b, (i & 1) * 256, (i >> 1) * 256); b.close(); }
     }));
     if (t.tiris?.key !== key) return;

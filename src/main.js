@@ -6,6 +6,7 @@ import { Terrain } from './terrain.js';
 import { RouteLayer } from './routes.js';
 import { createUI } from './ui.js';
 import { Controls } from './controls.js';
+import { createBackend } from './backend.js';
 
 const view = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -27,7 +28,8 @@ sky.material.uniforms.mieCoefficient.value = 0.004; sky.material.uniforms.mieDir
 
 const START = { lon: 11.865, lat: 47.17 };
 const frame = new Frame(START.lon, START.lat);
-const terrain = new Terrain(renderer, scene, frame);
+const backend = await createBackend();
+const terrain = new Terrain(renderer, scene, frame, backend);
 const routes = new RouteLayer();
 terrain.routeLayer = routes;
 
@@ -107,7 +109,7 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
-const ui = createUI({ terrain, routes, camera, controls, frame, flyTo, flyToBounds, lookAt, setRegion, setSun, pickAt, invalidate, renderer });
+const ui = createUI({ terrain, routes, camera, controls, frame, flyTo, flyToBounds, lookAt, setRegion, setSun, pickAt, invalidate, renderer, backend });
 
 let last = performance.now();
 function tick(now) {
@@ -140,4 +142,4 @@ terrain.onChange = () => {
   }
 };
 requestAnimationFrame(tick);
-window.nextmap = { terrain, routes, camera, controls, frame, flyTo, lookAt, ui };
+window.nextmap = { terrain, routes, camera, controls, frame, flyTo, lookAt, ui, backend };

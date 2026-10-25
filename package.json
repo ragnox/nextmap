@@ -5,18 +5,19 @@
   "description": "3D alpine map for Tyrol: tiris laser-scan terrain, summer/winter imagery and crawled hiking and ski-touring routes",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/main.js --bundle --minify --sourcemap --format=esm --target=es2022 --outfile=public/app.js",
-    "watch": "esbuild src/main.js --bundle --sourcemap --format=esm --target=es2022 --outfile=public/app.js --watch=forever",
+    "build": "node scripts/build.js",
+    "watch": "node scripts/build.js --watch",
     "start": "npm run build && node --env-file-if-exists=.env server/index.js",
-    "dev": "npm run build && (npm run watch & node --env-file-if-exists=.env --watch-path=server server/index.js)",
+    "dev": "npm run build && (npm run watch & node --env-file-if-exists=.env --watch-path=server --watch-path=shared server/index.js)",
     "crawl": "node --env-file-if-exists=.env server/crawler/cli.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build:static": "node scripts/build.js --static",
+    "deploy": "npm run build:static && npx wrangler pages deploy dist --project-name nextmap --branch main"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "geotiff": "^2.1.3",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
     "three": "^0.170.0"

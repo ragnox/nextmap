@@ -13,17 +13,11 @@ const hours = (h) => (h == null ? null : `${Math.floor(h)}:${String(Math.round((
 const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const clock = (t) => new Date(t).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
 
-async function getJSON(url, opts) {
-  const r = await fetch(url, opts);
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    throw Object.assign(new Error(body.error || r.statusText), { status: r.status, until: body.until });
-  }
-  return r.json();
-}
 
 export function createUI(app) {
-  const { terrain, routes, camera, controls, frame, invalidate } = app;
+  const { terrain, routes, camera, controls, frame, invalidate, backend } = app;
+  const local = backend.mode === 'server';            // crawler, bergfex and GPX uploads need the local server
+  document.body.classList.toggle('static-site', !local);
   const state = { region: null, all: [], kind: 'all', q: '', sort: 'near', inView: false, selected: null, profile: null, crawling: false, s2: {} };
   const marker = Object.assign(document.createElement('div'), { id: 'marker' });
   Object.assign(marker.style, { position: 'fixed', width: '14px', height: '14px', margin: '-7px 0 0 -7px', borderRadius: '50%', background: '#ffd23f', border: '2px solid #141414', pointerEvents: 'none', zIndex: 6, display: 'none' });
@@ -31,20 +25,20 @@ export function createUI(app) {
   let markerPos = null;
 
   // ------------------------------------------------------------ regions
-  getJSON('/api/regions').then((list) => {
+  backend.regions().then((list) => {
     $('region-list').innerHTML = list.map((r) => `<option value="${esc(r.name)}">`).join('');
   });
   $('region-form').addEventListener('submit', (e) => { e.preventDefault(); goRegion($('region').value, true); });
 
   async function goRegion(q, fly) {
     try {
-      const region = await getJSON(`/api/region?q=${encodeURIComponent(q || 'Zillertal')}`);
+      const region = await backend.region(q || 'Zillertal');
       state.region = region;
       $('region').value = region.name;
       app.setRegion(region, { fly });
       const data = await loadRoutes();
       // a region nobody has crawled yet: fetch its OpenStreetMap routes right away (the web sites stay on the button)
-      if (!state.all.length && !Object.keys(data.sources || {}).length && !state.crawling) {
+      if (local && !state.all.length && !Object.keys(data.sources || {}).length && !state.crawling) {
         $('crawl-status').textContent = `Fetching OpenStreetMap routes for ${region.name}…`;
         startCrawl(['osm']);
       }
@@ -55,7 +49,7 @@ export function createUI(app) {
 
   // ------------------------------------------------------------ routes
   async function loadRoutes() {
-    const data = await getJSON(`/api/routes?region=${encodeURIComponent(state.region.name)}`);
+    const data = await backend.routes(state.region);
     const sel = state.selected?.id;
     state.all = data.routes;
     routes.setRoutes(state.all);
@@ -63,7 +57,9 @@ export function createUI(app) {
     const t = data.tracks;
     const trackNote = t && t.total && t.withTrack < t.total
       ? ` · bergfex tracks ${t.withTrack}/${t.total}${t.waitUntil ? `, more after ${clock(t.waitUntil)}` : t.running ? ', loading' : ''}` : '';
-    $('crawl-status').textContent = state.all.length ? `${state.all.length} routes cached · ${srcs.join(' · ')}${trackNote}` : 'No routes for this region yet. Search the web to find some.';
+    $('crawl-status').textContent = !local
+      ? (state.all.length ? `${state.all.length} OpenStreetMap routes, collected ${new Date(data.updated || Object.values(data.sources)[0]?.crawled).toLocaleDateString('de-AT')}.` : 'No routes collected for this region yet.')
+      : state.all.length ? `${state.all.length} routes cached · ${srcs.join(' · ')}${trackNote}` : 'No routes for this region yet. Search the web to find some.';
     // tracks still arriving in the background: look again in a minute
     clearTimeout(state.trackTimer);
     if (t?.running && !state.crawling) state.trackTimer = setTimeout(() => { if (!state.crawling) loadRoutes(); }, 60000);
@@ -145,7 +141,7 @@ export function createUI(app) {
       $('d-profile-note').textContent = 'Fetching the track from bergfex…';
       if (fly) zoomTo(r);
       try {
-        const t = await getJSON(`/api/track?region=${encodeURIComponent(state.region.name)}&id=${encodeURIComponent(r.id)}`);
+        const t = await backend.track(state.region, r.id);
         if (state.selected !== r) return;
         trackArrived(r, t, fly);
       } catch (e) {
@@ -157,7 +153,7 @@ export function createUI(app) {
     if (r.lines) {
       $('d-profile-note').textContent = 'Measuring the elevation profile on the tiris DGM…';
       try {
-        const p = await getJSON('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines: r.lines }) });
+        const p = await backend.profile(r.lines);
         if (state.selected !== r) return;
         state.profile = p;
         renderStats({ ...(r.stats || {}), length: p.length, ascent: p.ascent, descent: p.descent, min: p.min, max: p.max });
@@ -188,7 +184,7 @@ export function createUI(app) {
       : closest > 3000 ? `This track comes no closer than ${km(closest)} to where “${r.name}” starts.` : null;
     if (doubt && !window.confirm(`${doubt}\n\nAttach it to “${r.name}” anyway?`)) { $('d-profile-note').textContent = `${file.name} was not attached.`; return; }
     try {
-      const t = await getJSON(`/api/track?region=${encodeURIComponent(state.region.name)}&id=${encodeURIComponent(r.id)}`, { method: 'POST', headers: { 'Content-Type': 'application/gpx+xml' }, body: text });
+      const t = await backend.attachGpx(state.region, r.id, text);
       if (state.selected !== r) return;
       trackArrived(r, t, true);
       select(r, { fly: false });                               // profile and stats from the new track
@@ -197,7 +193,7 @@ export function createUI(app) {
   const gpxInput = Object.assign(document.createElement('input'), { type: 'file', accept: '.gpx,application/gpx+xml', hidden: true });
   gpxInput.addEventListener('change', () => { attachFile(gpxInput.files[0]); gpxInput.value = ''; });
   document.body.appendChild(gpxInput);
-  $('side').addEventListener('dragover', (e) => { if (state.selected && e.dataTransfer.types.includes('Files')) { e.preventDefault(); $('detail').classList.add('drop'); } });
+  $('side').addEventListener('dragover', (e) => { if (local && state.selected && e.dataTransfer.types.includes('Files')) { e.preventDefault(); $('detail').classList.add('drop'); } });
   $('side').addEventListener('dragleave', () => $('detail').classList.remove('drop'));
   $('side').addEventListener('drop', (e) => {
     $('detail').classList.remove('drop');
@@ -212,7 +208,7 @@ export function createUI(app) {
     if (r.lines) acts.push(`<button id="d-gpx">GPX</button>`);
     const bf = r.id.match(/^bergfex-(\d+)$/);
     if (bf) acts.push(`<a href="https://www.bergfex.at/downloads/gps/?id=${bf[1]}&amp;fileType=gpx" target="_blank" rel="noopener">GPX on bergfex ↗</a>`);
-    if (!r.lines || r.source === 'bergfex') acts.push(`<button id="d-attach" title="Use a GPX file you downloaded as this route's track (or drop it on this panel)">Attach GPX…</button>`);
+    if (local && (!r.lines || r.source === 'bergfex')) acts.push(`<button id="d-attach" title="Use a GPX file you downloaded as this route's track (or drop it on this panel)">Attach GPX…</button>`);
     $('d-actions').innerHTML = acts.join('');
     $('d-attach')?.addEventListener('click', () => gpxInput.click());
     $('d-zoom').onclick = () => zoomTo(r);
@@ -277,19 +273,19 @@ export function createUI(app) {
   pc.addEventListener('mouseleave', () => { drawProfile(); markerPos = null; marker.style.display = 'none'; invalidate(); });
 
   // ------------------------------------------------------------ crawler
-  getJSON('/api/sources').then((list) => {
+  backend.sources().then((list) => {
     $('crawl-sources').innerHTML = list.map((s) => `<label><input type="checkbox" value="${s.id}" checked> ${esc(s.label)}</label>`).join('');
   });
   $('crawl-toggle').addEventListener('click', () => { $('crawl-more').hidden = !$('crawl-more').hidden; $('crawl-log').hidden = $('crawl-more').hidden; });
   async function startCrawl(sources) {
     state.crawling = true;
-    await getJSON('/api/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ region: state.region?.name || $('region').value, sources }) });
+    await backend.startCrawl(state.region?.name || $('region').value, sources);
     pollCrawl();
   }
   $('crawl').addEventListener('click', () => startCrawl([...document.querySelectorAll('#crawl-sources input:checked')].map((i) => i.value)));
   let lastReload = 0;
   async function pollCrawl() {
-    const s = await getJSON('/api/crawl').catch(() => null);
+    const s = await backend.crawlStatus().catch(() => null);
     if (!s || s.state === 'idle') return;
     const running = s.state === 'running';
     state.crawling = running;
@@ -311,7 +307,7 @@ export function createUI(app) {
     const key = `${season}-${state.region.slug}`;
     if (!state.s2[key]) {
       $('s2-info').textContent = `Finding the best Sentinel-2 ${season} scene…`;
-      state.s2[key] = getJSON(`/api/s2/${season}?region=${encodeURIComponent(state.region.name)}`).catch((e) => ({ error: e.message }));
+      state.s2[key] = backend.s2Scene(season, state.region).catch((e) => ({ error: e.message }));
     }
     const s = await state.s2[key];
     if (terrain.settings.season !== season) return;

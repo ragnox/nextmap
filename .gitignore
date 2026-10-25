@@ -3,3 +3,6 @@ cache/
 public/app.js
 public/app.js.map
 .env
+dist/
+public/worker.js
+public/worker.js.map

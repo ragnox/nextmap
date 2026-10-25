@@ -27,6 +27,16 @@ Crawl from the shell instead of the button: `npm run crawl -- "Zillertal"` (or `
 
 On a phone the route list is a bottom sheet (tap its header to expand it) and the layers open from the button at the top right.
 
+## Public site (Cloudflare Pages)
+
+**https://nextmap.pages.dev** is the static build: no server behind it. Visitors' browsers fetch the tiris DGM, the orthophotos and Sentinel-2 directly (all of them allow it) and build the tiles in a web worker with the same code the local server uses (`shared/`), keeping elevation tiles in the browser for the next visit. Routes come from snapshots of the OpenStreetMap crawls in `dist/data/routes/`; crawling, bergfex tours and GPX uploads stay in the local app, since bergfex's content is not ours to republish.
+
+```bash
+npm run deploy
+```
+
+builds `dist/` (`npm run build:static`) from the current `cache/routes/` and uploads it with `wrangler pages deploy` to the `nextmap` project on the Cloudflare account wrangler is logged in to (`npx wrangler login`; it needs only Pages write access). Code files carry a hash in their name, so a visitor never mixes old and new files.
+
 ## Controls
 
 Like Google Earth and Google Maps:
@@ -47,11 +57,13 @@ The view glides on briefly after a drag, never goes below the ground, and moves 
 
 | Path | What |
 | --- | --- |
+| `shared/` | Code for both sides: tile maths and profiles, the DEM builder and TIFF reader, Sentinel-2 scenes, imagery sources, regions |
 | `server/index.js` | HTTP server: static files and the API |
-| `server/dem.js` | Elevation tiles: tiris WCS (5 m / 0.5 m, both Gauss-Krüger zones) + Terrarium fill, 259×259 Float32 per tile |
-| `server/imagery.js` | Orthophoto and Land Tirol overlay tiles, cached in `cache/` |
-| `server/sentinel.js` | Sentinel-2 scene choice (STAC) and tiles with the snow fraction in alpha |
+| `server/dem.js`, `imagery.js`, `sentinel.js` | The shared tile code with disk caches: elevation (tiris WCS 5 m / 0.5 m + Terrarium, 259×259 Float32 per tile), orthophotos and overlays, Sentinel-2 with the snow fraction in alpha |
 | `server/crawler/` | Regions, OSM and bergfex sources, polite fetching, crawl jobs |
+| `src/backend.js` | The local server's API, or on a static host the data worker and the route snapshots |
+| `src/worker.js` | Data worker for the static site: elevation tiles, orthophoto patching, Sentinel-2 snow, profiles |
+| `scripts/build.js` | Builds `public/` for the local server and `dist/` for Cloudflare Pages |
 | `src/controls.js` | Camera navigation: grab, orbit around a point, look around, zoom to cursor, keys, touch |
 | `src/terrain.js` | Quadtree level of detail; leaves draw with the nearest loaded ancestor's data |
 | `src/shaders.js` | Terrain shaders: DEM in the vertex shader, imagery, snow, slope, contours, overlays |
