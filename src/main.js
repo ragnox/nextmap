@@ -1,11 +1,11 @@
 // nextmap: 3D map of Tyrol on three.js. Terrain from the Land Tirol laser scan, summer/winter imagery, routes.
 import * as THREE from 'three';
-import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { Frame, lonToX, latToY } from './geo.js';
 import { Terrain } from './terrain.js';
 import { RouteLayer } from './routes.js';
 import { createUI } from './ui.js';
+import { Controls } from './controls.js';
 
 const view = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -31,15 +31,11 @@ const terrain = new Terrain(renderer, scene, frame);
 const routes = new RouteLayer();
 terrain.routeLayer = routes;
 
-const controls = new MapControls(camera, renderer.domElement);
-controls.enableDamping = true; controls.dampingFactor = 0.12;
-controls.screenSpacePanning = false; controls.zoomToCursor = true;
-controls.minDistance = 40; controls.maxDistance = 300000; controls.maxPolarAngle = Math.PI * 0.49;
-controls.zoomSpeed = 1.4;
+const visualCenter = new THREE.Vector2();
+const controls = new Controls(camera, renderer.domElement, terrain, visualCenter);
 
 let dirty = true;
 const invalidate = () => { dirty = true; };
-controls.addEventListener('change', invalidate);
 terrain.onChange = invalidate;
 
 // ---------------------------------------------------------------- sun
@@ -64,38 +60,22 @@ function lookAt(lon, lat, { dist = 9000, pitch = 38, heading = 180 } = {}) {
   return { pos: tgt.clone().add(off), tgt };
 }
 
-let flight = null;
-function flyTo({ pos, tgt }, ms = 1600) {
-  flight = { t0: performance.now(), ms, p0: camera.position.clone(), t0v: controls.target.clone(), p1: pos, t1: tgt };
-  invalidate();
-}
+function flyTo(view, ms = 1600) { controls.flyTo(view, ms); invalidate(); }
 function flyToBounds([w, s, e, n], { heading } = {}) {
   const [x0, z0] = frame.fromLonLat(w, n), [x1, z1] = frame.fromLonLat(e, s);
   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, span = Math.max(x1 - x0, z1 - z0, 800);
   const dist = (span * 1.7) / (2 * Math.tan((camera.fov * Math.PI) / 360));
-  const cur = new THREE.Vector3().subVectors(camera.position, controls.target);
-  const h = heading ?? Math.atan2(-cur.x, cur.z) * 180 / Math.PI;
   const [lon, lat] = frame.toLonLat(cx, cz);
-  flyTo(lookAt(lon, lat, { dist, pitch: 52, heading: h }));
+  flyTo(lookAt(lon, lat, { dist, pitch: 52, heading: heading ?? controls.heading * 180 / Math.PI }));
 }
-
-// keep the pivot on the ground: move the target along the view ray onto the terrain (the view does not change)
 const ray = new THREE.Raycaster();
-const visualCenter = new THREE.Vector2();
-function pivotToCenter() {
-  ray.setFromCamera(visualCenter, camera);
-  const hit = terrain.raycast(ray.ray);
-  if (hit) controls.target.copy(hit);
-}
-controls.addEventListener('start', () => { flight = null; pivotToCenter(); });
 
 function setRegion(region, { fly = true } = {}) {
   const [lon, lat] = region.view;
   const far = Math.hypot((lon - frame.lon0) * 75, (lat - frame.lat0) * 111) > 120;
   if (far) {                                         // move the world origin with the region
     frame.set(lon, lat); terrain.setFrame(frame);
-    const v = lookAt(lon, lat, { dist: 14000, pitch: 35, heading: 180 });
-    camera.position.copy(v.pos); controls.target.copy(v.tgt);
+    controls.setView(lookAt(lon, lat, { dist: 14000, pitch: 35, heading: 180 }));
   } else if (fly) flyTo(lookAt(lon, lat, { dist: 14000, pitch: 35, heading: 180 }), 2000);
   invalidate();
 }
@@ -129,20 +109,12 @@ window.addEventListener('resize', resize);
 
 const ui = createUI({ terrain, routes, camera, controls, frame, flyTo, flyToBounds, lookAt, setRegion, setSun, pickAt, invalidate, renderer });
 
+let last = performance.now();
 function tick(now) {
   requestAnimationFrame(tick);
-  if (flight) {
-    const k = Math.min((now - flight.t0) / flight.ms, 1), e = k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2;
-    const lift = Math.sin(k * Math.PI) * Math.min(flight.p0.distanceTo(flight.p1) * 0.25, 15000);
-    camera.position.lerpVectors(flight.p0, flight.p1, e); camera.position.y += lift;
-    controls.target.lerpVectors(flight.t0v, flight.t1, e);
-    if (k >= 1) flight = null;
-    dirty = true;
-  }
-  const moved = controls.update();
-  // stay above the ground
+  const moved = controls.update((now - last) / 1000);
+  last = now;
   const g = terrain.heightAt(camera.position.x, camera.position.z);
-  if (g !== null && camera.position.y < g + 20) { camera.position.y = g + 20; dirty = true; }
   if (!dirty && !moved && !terrain.busy() && !ui.busy()) return;
   dirty = false;
   const agl = camera.position.y - (g ?? 0);
@@ -157,16 +129,14 @@ function tick(now) {
 }
 
 resize();
-const initial = lookAt(START.lon, START.lat, { dist: 16000, pitch: 32, heading: 180 });
-camera.position.copy(initial.pos); controls.target.copy(initial.tgt);
+controls.setView(lookAt(START.lon, START.lat, { dist: 16000, pitch: 32, heading: 180 }));
 // settle the start view on the real ground once the first tiles are in
 let settled = false;
 terrain.onChange = () => {
   invalidate();
   if (!settled && terrain.heightAt(controls.target.x, controls.target.z) !== null) {
     settled = true;
-    const v = lookAt(START.lon, START.lat, { dist: 16000, pitch: 32, heading: 180 });
-    camera.position.copy(v.pos); controls.target.copy(v.tgt);
+    controls.setView(lookAt(START.lon, START.lat, { dist: 16000, pitch: 32, heading: 180 }));
   }
 };
 requestAnimationFrame(tick);

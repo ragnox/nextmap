@@ -29,7 +29,19 @@ On a phone the route list is a bottom sheet (tap its header to expand it) and th
 
 ## Controls
 
-Left drag pans, right drag (or Ctrl + drag) rotates and tilts, the wheel zooms to the cursor. Click a route on the map or in the list to see its details; hover the profile to find a point on the map. The compass turns the view north.
+Like Google Earth and Google Maps:
+
+| Input | Does |
+| --- | --- |
+| Drag | Moves the map; the ground under the cursor follows it |
+| Shift + drag, Ctrl/⌘ + drag, or right drag | Turns and tilts around the point you grabbed, which stays in place |
+| Alt + drag | Looks around from where the camera is |
+| Wheel, trackpad pinch | Zooms to the point under the cursor |
+| Double-click | Zooms in there (Shift: out) |
+| Arrows / WASD | Move · Q E or Shift + ←/→ turn · R F or Shift + ↑/↓ tilt · + − zoom · N north up · ? help |
+| Touch | One finger moves; two fingers pinch, twist to turn, slide up or down together to tilt |
+
+The view glides on briefly after a drag, never goes below the ground, and moves closer instead of through a slope when you turn near one. The buttons at the bottom right zoom, switch between looking straight down and the tilted view, turn north up, and show the controls. Click a route on the map or in the list to see its details; hover the profile to find a point on the map.
 
 ## Layout
 
@@ -40,6 +52,7 @@ Left drag pans, right drag (or Ctrl + drag) rotates and tilts, the wheel zooms t
 | `server/imagery.js` | Orthophoto and Land Tirol overlay tiles, cached in `cache/` |
 | `server/sentinel.js` | Sentinel-2 scene choice (STAC) and tiles with the snow fraction in alpha |
 | `server/crawler/` | Regions, OSM and bergfex sources, polite fetching, crawl jobs |
+| `src/controls.js` | Camera navigation: grab, orbit around a point, look around, zoom to cursor, keys, touch |
 | `src/terrain.js` | Quadtree level of detail; leaves draw with the nearest loaded ancestor's data |
 | `src/shaders.js` | Terrain shaders: DEM in the vertex shader, imagery, snow, slope, contours, overlays |
 | `src/routes.js` | Routes painted into each tile's overlay canvas so they lie exactly on the ground |

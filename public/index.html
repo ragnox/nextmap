@@ -99,9 +99,36 @@
   <label class="field">Sun <input type="range" id="sun" min="0" max="100" value="45"></label>
 </div>
 
-<button id="compass" class="panel" title="North up">
-  <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2 L16 13 L12 11 L8 13 Z" fill="#e8462e"/><path d="M12 22 L8 11 L12 13 L16 11 Z" fill="#ddd"/></svg>
-</button>
+<div id="nav" class="panel">
+  <button id="zoom-in" title="Zoom in (+)" aria-label="Zoom in">+</button>
+  <button id="zoom-out" title="Zoom out (−)" aria-label="Zoom out">−</button>
+  <button id="tilt" title="Look straight down / tilt back (2D/3D)">2D</button>
+  <button id="compass" title="North up (N)" aria-label="North up">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2 L16 13 L12 11 L8 13 Z" fill="#e8462e"/><path d="M12 22 L8 11 L12 13 L16 11 Z" fill="#ddd"/></svg>
+  </button>
+  <button id="help-btn" title="Controls (?)" aria-label="Controls">?</button>
+</div>
+
+<div id="help" hidden>
+  <div class="card panel" role="dialog" aria-label="Controls">
+    <button class="close ghost" aria-label="Close">✕</button>
+    <h3>Getting around</h3>
+    <div class="keys">
+      <b>Drag</b><span>Move the map: the ground follows the cursor</span>
+      <b><kbd>Shift</kbd> or <kbd>Ctrl</kbd> / <kbd>⌘</kbd> + drag</b><span>Turn and tilt around the point you grabbed</span>
+      <b>Right drag</b><span>The same, without a key</span>
+      <b><kbd>Alt</kbd> + drag</b><span>Look around from where you are</span>
+      <b>Wheel, pinch</b><span>Zoom to the point under the cursor</span>
+      <b>Double-click</b><span>Zoom in there (<kbd>Shift</kbd>: out)</span>
+      <b><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> / <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></b><span>Move</span>
+      <b><kbd>Q</kbd> <kbd>E</kbd> · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd></b><span>Turn</span>
+      <b><kbd>R</kbd> <kbd>F</kbd> · <kbd>Shift</kbd>+<kbd>↑</kbd><kbd>↓</kbd></b><span>Tilt</span>
+      <b><kbd>+</kbd> <kbd>−</kbd></b><span>Zoom</span>
+      <b><kbd>N</kbd></b><span>North up</span>
+      <b>Touch</b><span>One finger moves; two fingers pinch to zoom, twist to turn, slide up or down together to tilt</span>
+    </div>
+  </div>
+</div>
 
 <div id="status">
   <span id="cursor"></span>

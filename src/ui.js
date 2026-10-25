@@ -279,11 +279,17 @@ export function createUI(app) {
   });
   $('side').addEventListener('transitionend', () => window.dispatchEvent(new Event('resize')));
 
-  const headingNow = () => { const d = new THREE.Vector3().subVectors(controls.target, camera.position); return (Math.atan2(d.x, -d.z) * 180) / Math.PI; };
-  $('compass').addEventListener('click', () => {
-    const d = camera.position.distanceTo(controls.target), pitch = Math.asin((camera.position.y - controls.target.y) / d) * 180 / Math.PI;
-    const [lon, lat] = frame.toLonLat(controls.target.x, controls.target.z);
-    app.flyTo(app.lookAt(lon, lat, { dist: d, pitch, heading: 0 }), 900);
+  const headingNow = () => (controls.heading * 180) / Math.PI;
+
+  // navigation buttons and the help card
+  const nav = { 'zoom-in': () => controls.zoomStep(1), 'zoom-out': () => controls.zoomStep(-1), tilt: () => controls.toggleTilt(), compass: () => controls.northUp(), 'help-btn': () => toggleHelp() };
+  for (const [id, fn] of Object.entries(nav)) $(id).addEventListener('click', () => { fn(); invalidate(); });
+  const toggleHelp = (show = $('help').hidden) => { $('help').hidden = !show; };
+  $('help').addEventListener('click', (e) => { if (e.target === $('help') || e.target.closest('.close')) toggleHelp(false); });
+  window.addEventListener('keydown', (e) => {
+    if (e.target.closest?.('input, select, textarea')) return;
+    if (e.key === '?') toggleHelp();
+    if (e.key === 'Escape') toggleHelp(false);
   });
 
   // ------------------------------------------------------------ map pointer
@@ -316,9 +322,9 @@ export function createUI(app) {
   // ------------------------------------------------------------ per frame
   const v = new THREE.Vector3();
   function frameUpdate() {
-    const d = new THREE.Vector3().subVectors(controls.target, camera.position);
-    $('compass').firstElementChild.style.transform = `rotate(${-Math.atan2(d.x, -d.z) * 180 / Math.PI}deg)`;
-    const n = terrain.loading + Object.values(terrain.active || {}).reduce((a, b) => a + b, 0);
+    $('compass').firstElementChild.style.transform = `rotate(${-headingNow()}deg)`;
+    $('tilt').textContent = controls.pitch < -75 * Math.PI / 180 ? '3D' : '2D';
+    const n = Object.values(terrain.active || {}).reduce((a, b) => a + b, 0);
     $('loading').textContent = n ? `Loading terrain… ${n}` : '';
     if (markerPos) {
       v.copy(markerPos).project(camera);
