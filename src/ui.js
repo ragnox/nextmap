@@ -11,10 +11,14 @@ const km = (m) => (m == null ? '–' : m >= 10000 ? `${(m / 1000).toFixed(0)} km
 const hm = (m) => (m == null ? '–' : `${Math.round(m).toLocaleString('de-AT')} m`);
 const hours = (h) => (h == null ? null : `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} h`);
 const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+const clock = (t) => new Date(t).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
 
 async function getJSON(url, opts) {
   const r = await fetch(url, opts);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw Object.assign(new Error(body.error || r.statusText), { status: r.status, until: body.until });
+  }
   return r.json();
 }
 
@@ -56,7 +60,13 @@ export function createUI(app) {
     state.all = data.routes;
     routes.setRoutes(state.all);
     const srcs = Object.entries(data.sources || {}).map(([k, v]) => `${v.label} ${v.count} (${new Date(v.crawled).toLocaleDateString('de-AT')})`);
-    $('crawl-status').textContent = state.all.length ? `${state.all.length} routes cached · ${srcs.join(' · ')}` : 'No routes for this region yet. Search the web to find some.';
+    const t = data.tracks;
+    const trackNote = t && t.total && t.withTrack < t.total
+      ? ` · bergfex tracks ${t.withTrack}/${t.total}${t.waitUntil ? `, more after ${clock(t.waitUntil)}` : t.running ? ', loading' : ''}` : '';
+    $('crawl-status').textContent = state.all.length ? `${state.all.length} routes cached · ${srcs.join(' · ')}${trackNote}` : 'No routes for this region yet. Search the web to find some.';
+    // tracks still arriving in the background: look again in a minute
+    clearTimeout(state.trackTimer);
+    if (t?.running && !state.crawling) state.trackTimer = setTimeout(() => { if (!state.crawling) loadRoutes(); }, 60000);
     applyFilter();
     if (sel) { const r = state.all.find((x) => x.id === sel); if (r) { state.selected = r; routes.select(r); } }
     return data;
@@ -128,16 +138,24 @@ export function createUI(app) {
     renderStats(r.stats || {});
     $('d-desc').textContent = [r.from && r.to ? `${r.from} → ${r.to}` : '', r.description || ''].filter(Boolean).join('. ');
     $('d-img').hidden = !r.image; if (r.image) $('d-img').src = r.image;
-    const acts = [`<button id="d-zoom">Zoom to route</button>`, `<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on ${SOURCE_LABEL[r.source] || 'source'} ↗</a>`];
-    if (r.website) acts.push(`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website ↗</a>`);
-    if (r.lines) acts.push(`<button id="d-gpx">GPX</button>`);
-    $('d-actions').innerHTML = acts.join('');
-    $('d-zoom').onclick = () => zoomTo(r);
-    if (r.lines) $('d-gpx').onclick = () => downloadGpx(r);
+    renderActions(r);
     $('profile').hidden = true;
-    $('d-profile-note').textContent = r.lines ? 'Measuring the elevation profile on the tiris DGM…' : 'Only the start point is known for this route; the track is on the source page.';
-    if (fly) zoomTo(r);
+    if (!r.lines && r.source === 'bergfex') {
+      // crawled before tracks were fetched: get this one now
+      $('d-profile-note').textContent = 'Fetching the track from bergfex…';
+      if (fly) zoomTo(r);
+      try {
+        const t = await getJSON(`/api/track?region=${encodeURIComponent(state.region.name)}&id=${encodeURIComponent(r.id)}`);
+        if (state.selected !== r) return;
+        trackArrived(r, t, fly);
+      } catch (e) {
+        $('d-profile-note').textContent = e.status === 429
+          ? `bergfex allows only a few track downloads at a time; this one follows in the background after ${clock(e.until)}. Or get it with “GPX on bergfex” while logged in and drop the file here.`
+          : `bergfex has no track for this tour (${e.message}). If you have one, drop the GPX file here.`;
+      }
+    } else if (fly) zoomTo(r);
     if (r.lines) {
+      $('d-profile-note').textContent = 'Measuring the elevation profile on the tiris DGM…';
       try {
         const p = await getJSON('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lines: r.lines }) });
         if (state.selected !== r) return;
@@ -146,7 +164,59 @@ export function createUI(app) {
         $('profile').hidden = false; $('d-profile-note').textContent = 'Elevation from the Land Tirol laser scan (0.5 m DGM), sampled every 10 m.';
         drawProfile();
       } catch (e) { $('d-profile-note').textContent = `No profile: ${e.message}`; }
-    }
+    } else if (r.source !== 'bergfex') $('d-profile-note').textContent = 'Only the start point is known for this route.';
+  }
+  function trackArrived(r, t, fly) {
+    Object.assign(r, { lines: t.lines, start: t.start, stats: t.stats, top: t.top, measured: true });
+    routes.refresh(r);
+    renderStats(r.stats); renderActions(r); renderList();
+    if (fly) zoomTo(r);
+  }
+
+  // attach a GPX file to the selected route: dropped on the panel or picked with the button
+  async function attachFile(file) {
+    const r = state.selected;
+    if (!r || !file) return;
+    $('d-profile-note').textContent = `Reading ${file.name}…`;
+    const text = await file.text();
+    // make sure the file belongs to this route: bergfex names its files after the tour, and a track should pass its start
+    const inName = file.name.match(/bergfextour_(\d+)/), own = r.id.match(/^bergfex-(\d+)$/);
+    const pts = [...text.matchAll(/<(?:trkpt|rtept)\b[^>]*>/g)].map(([t]) => [Number(t.match(/lon="([-\d.]+)"/)?.[1]), Number(t.match(/lat="([-\d.]+)"/)?.[1])]).filter(([a, b]) => a && b);
+    if (!pts.length) { $('d-profile-note').textContent = `${file.name} has no track points.`; return; }
+    const closest = r.start ? Math.min(...pts.map((p) => haversine(p, r.start))) : 0;
+    const doubt = inName && own && inName[1] !== own[1] ? `${file.name} is bergfex tour ${inName[1]}, not this one.`
+      : closest > 3000 ? `This track comes no closer than ${km(closest)} to where “${r.name}” starts.` : null;
+    if (doubt && !window.confirm(`${doubt}\n\nAttach it to “${r.name}” anyway?`)) { $('d-profile-note').textContent = `${file.name} was not attached.`; return; }
+    try {
+      const t = await getJSON(`/api/track?region=${encodeURIComponent(state.region.name)}&id=${encodeURIComponent(r.id)}`, { method: 'POST', headers: { 'Content-Type': 'application/gpx+xml' }, body: text });
+      if (state.selected !== r) return;
+      trackArrived(r, t, true);
+      select(r, { fly: false });                               // profile and stats from the new track
+    } catch (e) { $('d-profile-note').textContent = `Could not use ${file.name}: ${e.message}`; }
+  }
+  const gpxInput = Object.assign(document.createElement('input'), { type: 'file', accept: '.gpx,application/gpx+xml', hidden: true });
+  gpxInput.addEventListener('change', () => { attachFile(gpxInput.files[0]); gpxInput.value = ''; });
+  document.body.appendChild(gpxInput);
+  $('side').addEventListener('dragover', (e) => { if (state.selected && e.dataTransfer.types.includes('Files')) { e.preventDefault(); $('detail').classList.add('drop'); } });
+  $('side').addEventListener('dragleave', () => $('detail').classList.remove('drop'));
+  $('side').addEventListener('drop', (e) => {
+    $('detail').classList.remove('drop');
+    if (!state.selected || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    attachFile(e.dataTransfer.files[0]);
+  });
+
+  function renderActions(r) {
+    const acts = [`<button id="d-zoom">Zoom to route</button>`, `<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on ${SOURCE_LABEL[r.source] || 'source'} ↗</a>`];
+    if (r.website) acts.push(`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website ↗</a>`);
+    if (r.lines) acts.push(`<button id="d-gpx">GPX</button>`);
+    const bf = r.id.match(/^bergfex-(\d+)$/);
+    if (bf) acts.push(`<a href="https://www.bergfex.at/downloads/gps/?id=${bf[1]}&amp;fileType=gpx" target="_blank" rel="noopener">GPX on bergfex ↗</a>`);
+    if (!r.lines || r.source === 'bergfex') acts.push(`<button id="d-attach" title="Use a GPX file you downloaded as this route's track (or drop it on this panel)">Attach GPX…</button>`);
+    $('d-actions').innerHTML = acts.join('');
+    $('d-attach')?.addEventListener('click', () => gpxInput.click());
+    $('d-zoom').onclick = () => zoomTo(r);
+    if (r.lines) $('d-gpx').onclick = () => downloadGpx(r);
   }
   function renderStats(s) {
     const items = [['Length', km(s.length)], ['Ascent', hm(s.ascent)], ['Descent', hm(s.descent)], ['Highest', hm(s.max)], ['Lowest', hm(s.min)], ['Time', hours(s.duration) || '–']];

@@ -41,6 +41,22 @@ export function simplify(line, tol) {
   return line.filter((_, i) => keep[i]).map(([x, y]) => [Math.round(x * 1e6) / 1e6, Math.round(y * 1e6) / 1e6]);
 }
 
+// total climb and descent: elevations averaged over 100 m first, then only changes beyond 5 m count, so a track that
+// wobbles across a slope does not add up its bumps (matches the climbs bergfex states to within a few percent)
+export function climb(d, e, win = 100, thr = 5) {
+  let up = 0, down = 0, ref = null;
+  for (let i = 0, a = 0, b = 0, sum = 0, n = 0; i < e.length; i++) {
+    while (b < e.length && d[b] - d[i] <= win / 2) { if (e[b] != null) { sum += e[b]; n++; } b++; }
+    while (d[i] - d[a] > win / 2) { if (e[a] != null) { sum -= e[a]; n--; } a++; }
+    if (!n) continue;
+    const v = sum / n;
+    if (ref === null) ref = v;
+    else if (v - ref > thr) { up += v - ref; ref = v; }
+    else if (ref - v > thr) { down += ref - v; ref = v; }
+  }
+  return { up, down };
+}
+
 // elevation profile of a multi-line: distance (m) and elevation (m) per sample, plus totals
 export async function profile(lines, { z = 14, step = 15, maxPts = 4000 } = {}) {
   const total = lines.reduce((s, l) => s + lineLength(l), 0);
@@ -49,19 +65,16 @@ export async function profile(lines, { z = 14, step = 15, maxPts = 4000 } = {}) 
   const flat = parts.flat();
   const h = await sampleElevations(z, flat.map(([lon, lat]) => [lonToX(lon), latToY(lat)]));
   const d = [], e = [], coords = [];
-  let dist = 0, i = 0, up = 0, down = 0, ref = null;
+  let dist = 0, i = 0, up = 0, down = 0;
   for (const part of parts) {
-    ref = null;
+    const from = d.length;
     part.forEach((p, k) => {
       if (k) dist += haversine(part[k - 1], p);
       const v = h[i++];
       d.push(Math.round(dist)); e.push(v == null ? null : Math.round(v * 10) / 10); coords.push(p);
-      if (v == null) return;
-      // count climbs and descents beyond 4 m so DEM noise does not add up
-      if (ref === null) ref = v;
-      else if (v - ref > 4) { up += v - ref; ref = v; }
-      else if (ref - v > 4) { down += ref - v; ref = v; }
     });
+    const c = climb(d.slice(from), e.slice(from));             // the step between separate pieces is no climb
+    up += c.up; down += c.down;
   }
   const valid = e.filter((v) => v != null);
   return {

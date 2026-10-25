@@ -1,7 +1,9 @@
 // bergfex.at tour listings for the region (hiking and ski touring), crawled within robots.txt with a pause between
-// requests. Tour pages give the start point, duration, ascent, length, altitude range and difficulty; their GPS
-// tracks are behind a login and are not fetched, so these routes show as start markers that link to bergfex.
-import { politeGet } from './polite.js';
+// requests. Tour pages give the start point, duration, ascent, length, altitude range and difficulty; each tour's GPX
+// track comes from bergfex's download link. Should bergfex ever ask for a login there, put your session cookie in
+// the BERGFEX_COOKIE environment variable and it is sent with those downloads.
+import { politeGet, RateLimited } from './polite.js';
+import { simplify } from '../geo.js';
 
 const BASE = 'https://www.bergfex.at';
 const CATEGORIES = [
@@ -47,6 +49,31 @@ export function parseTour(html, url, type) {
   };
 }
 
+// track segments (or a route) of a GPX file as lines of [lon, lat]
+export function parseGpx(text) {
+  const pts = (block, tag) => [...block.matchAll(new RegExp(`<${tag}\\b[^>]*>`, 'g'))].map(([t]) => {
+    const lat = t.match(/lat="([-\d.]+)"/), lon = t.match(/lon="([-\d.]+)"/);
+    return lat && lon ? [Number(lon[1]), Number(lat[1])] : null;
+  }).filter(Boolean);
+  let lines = [...text.matchAll(/<trkseg\b[\s\S]*?<\/trkseg>/g)].map(([seg]) => pts(seg, 'trkpt'));
+  if (!lines.some((l) => l.length > 1)) lines = [...text.matchAll(/<rte\b[\s\S]*?<\/rte>/g)].map(([r]) => pts(r, 'rtept'));
+  return lines.filter((l) => l.length > 1);
+}
+
+export const gpxUrl = (id) => `${BASE}/downloads/gps/?id=${id}&fileType=gpx`;
+
+// the tour's track, simplified to 3 m, or null
+export async function fetchTrack(id) {
+  const headers = process.env.BERGFEX_COOKIE ? { Cookie: process.env.BERGFEX_COOKIE } : {};
+  const text = await politeGet(gpxUrl(id), {
+    cacheKey: `web/bergfex/gpx-${id}.gpx`, maxAgeMs: 30 * 86400e3, headers,
+    accept: (t) => /<gpx[\s>]/.test(t) && /<(trkpt|rtept)\b/.test(t),
+  });
+  if (!text) return null;
+  const lines = parseGpx(text).map((l) => simplify(l, 3)).filter((l) => l.length > 1);
+  return lines.length ? lines : null;
+}
+
 export async function crawlBergfex(region, log, onRoutes) {
   const slug = region.bergfex || region.slug;
   const [w, s, e, n] = region.bbox, pad = 0.05;
@@ -63,14 +90,21 @@ export async function crawlBergfex(region, log, onRoutes) {
       log(`bergfex ${cat.path}: page ${page}, ${links.length} tours so far`);
       if (!found.length || !html.includes(`page=${page + 1}`)) break;
     }
-    let kept = 0;
+    let kept = 0, tracks = 0, limited = false;
     for (const [i, l] of links.entries()) {
       const id = l.url.match(/\/(\d+),/)[1];
       const html = await politeGet(l.url, { cacheKey: `web/bergfex/tour-${id}.html` });
       const r = html && parseTour(html, l.url, l.type);
-      if (r && inside(r.start)) { routes.push(r); kept++; }
+      if (r && inside(r.start)) {
+        r.lines = await fetchTrack(id).catch((e) => {
+          if (e instanceof RateLimited && !limited) { limited = true; log(`bergfex track downloads: ${e.message}; the rest follow in the background`); }
+          return null;
+        });
+        if (r.lines) { r.start = r.lines[0][0]; tracks++; }
+        routes.push(r); kept++;
+      }
       if (i % 10 === 9 || i === links.length - 1) {
-        log(`bergfex ${cat.path}: read ${i + 1}/${links.length} tours, ${kept} in the region`);
+        log(`bergfex ${cat.path}: read ${i + 1}/${links.length} tours, ${kept} in the region, ${tracks} with track`);
         onRoutes?.(routes);
       }
     }

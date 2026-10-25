@@ -8,8 +8,8 @@ A FATMAP-style 3D map of Tyrol, on the same engine as the Stummerberg walkthroug
 - **Overlays**: slope angle in the usual avalanche classes (30/35/40/45°), contour lines, and from Land Tirol: mountain trails, wildlife and forest protection zones, lifts.
 - **Routes**: a crawler that finds hiking and ski-touring routes for a region (default Zillertal):
   - **OpenStreetMap** (Overpass): hiking route relations and ski tours, with tracks. Unnamed routes, and those named only by a trail number, are named after the summit or hut at their highest point; ski tours split into several ways are merged. A region that has never been crawled fetches its OSM routes as soon as it is opened.
-  - **bergfex.at**: the region's hiking and ski-touring listings; start point, length, ascent, altitude range, time and difficulty. Their tracks need a login and are not fetched; these show as start markers with a link.
-  - Robots.txt is honoured (for `nextmap` or `*`), with at least 1.5 s between requests to a site, and every page is cached so re-crawls stay quiet.
+  - **bergfex.at**: the region's hiking and ski-touring listings with each tour's GPX track (from the tour's download link), time and difficulty; length, climb and altitudes are measured on the DGM like the OSM routes. bergfex serves these downloads without a login but only about 40 per 20 minutes, so a crawl gets the first ones and the rest follow in the background at that pace (the panel shows how many are in). A tour without a track shows as a start marker; selecting it tries to fetch the track straight away. You can also get a tour's file with “GPX on bergfex” in your own logged-in browser and drop it on the tour's panel (or use “Attach GPX…”) to use it at once. To send your bergfex login with the downloads (in case it raises the limit, or bergfex starts requiring it), copy `.env.example` to `.env` and fill in `BERGFEX_COOKIE`; it is only sent with the GPX downloads.
+  - Robots.txt is honoured (for `nextmap` or `*`), with at least 1.5 s between requests to a site; a “too many requests” answer or a used-up quota header pauses that part of the site until the time it gives; every page is cached so re-crawls stay quiet.
   - Every route with a track is measured on the tiris DGM (length, ascent, descent, high and low point); selecting one draws its elevation profile from the 0.5 m DGM and offers a GPX download.
 
 ## Run
@@ -23,7 +23,7 @@ Then open http://localhost:5173. `npm run dev` rebuilds the frontend and restart
 
 Crawl from the shell instead of the button: `npm run crawl -- "Zillertal"` (or `npm run crawl -- "Stubaital" osm`).
 
-`npm test` runs the unit tests (robots.txt rules, the bergfex page parser, OSM line chaining and route naming, projections and tile maths).
+`npm test` runs the unit tests (robots.txt rules, the bergfex page and GPX parsers, OSM line chaining and route naming, projections and tile maths).
 
 On a phone the route list is a bottom sheet (tap its header to expand it) and the layers open from the button at the top right.
 
@@ -62,4 +62,4 @@ Regions with hand-made extents: Zillertal, Stubaital, Ötztal, Pitztal, Kaunerta
 
 ## Data and licences
 
-Land Tirol (tiris) terrain, orthophotos and overlays, CC BY 4.0 · basemap.at, CC BY 4.0 · Copernicus Sentinel-2 data (modified) via Microsoft Planetary Computer · EOX Sentinel-2 cloudless 2023 (CC BY-NC-SA 4.0, non-commercial) · Mapzen/AWS Terrain Tiles · © OpenStreetMap contributors, ODbL · route listings link back to bergfex.at, whose content stays theirs.
+Land Tirol (tiris) terrain, orthophotos and overlays, CC BY 4.0 · basemap.at, CC BY 4.0 · Copernicus Sentinel-2 data (modified) via Microsoft Planetary Computer · EOX Sentinel-2 cloudless 2023 (CC BY-NC-SA 4.0, non-commercial) · Mapzen/AWS Terrain Tiles · © OpenStreetMap contributors, ODbL · bergfex.at tours and tracks stay bergfex's: for your own use, linked back to their pages.

@@ -10,6 +10,13 @@ export class RouteLayer {
     this.selected = null; this.hovered = null;
   }
   setRoutes(routes) {
+    this.prepare(routes);
+    this.routes = routes;
+    this.setShown(routes);
+  }
+  // a route whose geometry changed (its track arrived)
+  refresh(r) { delete r._m; this.prepare([r]); this.bump(); }
+  prepare(routes) {
     for (const r of routes) {
       if (r._m) continue;
       r._m = (r.lines || []).map((l) => l.map(([lon, lat]) => [lonToX(lon), latToY(lat)]));
@@ -17,8 +24,6 @@ export class RouteLayer {
       const pts = r._m.flat().concat(r._s ? [r._s] : []);
       r._b = pts.reduce((b, [x, y]) => [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)], [Infinity, Infinity, -Infinity, -Infinity]);
     }
-    this.routes = routes;
-    this.setShown(routes);
   }
   setShown(list) { this.shown = list; this.bump(); }
   select(r) { if (this.selected !== r) { this.selected = r; this.bump(); } }

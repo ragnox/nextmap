@@ -7,7 +7,8 @@ import { demTileGz, MAX_Z } from './dem.js';
 import { imageryTile } from './imagery.js';
 import { scene, s2Tile, S2_MAX_Z } from './sentinel.js';
 import { PRESETS, resolveRegion } from './crawler/regions.js';
-import { SOURCES, startCrawl, jobStatus, loadRoutes } from './crawler/index.js';
+import { SOURCES, startCrawl, jobStatus, loadRoutes, trackFor, attachGpx, trackStatus, backfillTracks, remeasure, needsRemeasure } from './crawler/index.js';
+import { RateLimited } from './crawler/polite.js';
 import { profile } from './geo.js';
 
 const PORT = Number(process.env.PORT || 5173);
@@ -19,11 +20,12 @@ const send = (res, status, body, type = 'application/json', extra = {}) => {
   res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 };
 const json = (res, body, status = 200) => send(res, status, body);
-const readBody = async (req) => {
+const readText = async (req) => {
   let s = '';
   for await (const c of req) { s += c; if (s.length > 5e6) throw new Error('body too large'); }
-  return s ? JSON.parse(s) : {};
+  return s;
 };
+const readBody = async (req) => { const s = await readText(req); return s ? JSON.parse(s) : {}; };
 const tileArgs = (m) => {
   const [z, x, y] = m.slice(1, 4).map(Number);
   if (!(z >= 0 && z <= 20 && x >= 0 && y >= 0 && x < 2 ** z && y < 2 ** z)) throw Object.assign(new Error('bad tile'), { status: 400 });
@@ -61,8 +63,25 @@ const routes = [
   ['GET', /^\/api\/routes$/, async (req, res, m, q) => {
     const region = await resolveRegion(q.get('region') || 'Zillertal');
     if (!region) return json(res, { error: 'region not found' }, 404);
-    const data = await loadRoutes(region.slug);
-    json(res, data || { region: region.name, slug: region.slug, bbox: region.bbox, view: region.view, sources: {}, routes: [] });
+    const data = (await loadRoutes(region.slug)) || { region: region.name, slug: region.slug, bbox: region.bbox, view: region.view, sources: {}, routes: [] };
+    const tracks = trackStatus(data);
+    // bergfex tracks still missing: keep fetching them within bergfex's download quota
+    if (tracks.withTrack < tracks.total && !tracks.running && jobStatus()?.state !== 'running') backfillTracks(region.slug);
+    if (needsRemeasure(data) && jobStatus()?.state !== 'running') remeasure(region.slug);
+    json(res, { ...data, tracks: trackStatus(data) });
+  }],
+  ['GET', /^\/api\/track$/, async (req, res, m, q) => {
+    try {
+      const r = await trackFor(q.get('region') || 'Zillertal', String(q.get('id') || ''));
+      r ? json(res, r) : json(res, { error: 'no track for this route' }, 404);
+    } catch (e) {
+      if (e instanceof RateLimited) return json(res, { error: 'download quota used up', until: e.until }, 429);
+      throw e;
+    }
+  }],
+  ['POST', /^\/api\/track$/, async (req, res, m, q) => {
+    const r = await attachGpx(q.get('region') || 'Zillertal', String(q.get('id') || ''), await readText(req));
+    r ? json(res, r) : json(res, { error: 'no track in that file, or no such route' }, 400);
   }],
   ['GET', /^\/api\/sources$/, async (req, res) => json(res, Object.entries(SOURCES).map(([id, s]) => ({ id, label: s.label })))],
   ['GET', /^\/api\/crawl$/, async (req, res) => json(res, jobStatus() || { state: 'idle' })],

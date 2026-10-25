@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { haversine, lineLength, densify, simplify } from '../server/geo.js';
+import { haversine, lineLength, densify, simplify, climb } from '../server/geo.js';
 import { tileBounds, tileAt, tileLonLat, lonToX, latToY, xToLon, yToLat, slug } from '../server/util.js';
 import { Frame } from '../src/geo.js';
 
@@ -22,6 +22,16 @@ test('densify keeps the vertices and adds points at the step', () => {
 test('simplify drops points within the tolerance, keeps corners', () => {
   const line = [[11, 47], [11.0005, 47.000001], [11.001, 47], [11.001, 47.001]];
   assert.deepEqual(simplify(line, 1), [[11, 47], [11.001, 47], [11.001, 47.001]]);
+});
+
+test('climb ignores small bumps and counts real climbs', () => {
+  const d = [...Array(201).keys()].map((i) => i * 10);                 // 2 km every 10 m
+  const wobble = d.map((x, i) => 1000 + (i % 2 ? 3 : -3));              // ±3 m noise on the flat
+  assert.deepEqual(climb(d, wobble), { up: 0, down: 0 });
+  const hill = d.map((x) => 1000 + Math.min(x, 1000) * 0.3 - Math.max(x - 1000, 0) * 0.3);   // 300 m up, 300 m down
+  const c = climb(d, hill);
+  assert.ok(Math.abs(c.up - 300) < 20 && Math.abs(c.down - 300) < 20, JSON.stringify(c));
+  assert.deepEqual(climb([0, 10], [null, null]), { up: 0, down: 0 });
 });
 
 test('Web Mercator tiles: projection round trip and tile lookup', () => {

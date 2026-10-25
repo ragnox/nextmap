@@ -7,9 +7,9 @@
   "scripts": {
     "build": "esbuild src/main.js --bundle --minify --sourcemap --format=esm --target=es2022 --outfile=public/app.js",
     "watch": "esbuild src/main.js --bundle --sourcemap --format=esm --target=es2022 --outfile=public/app.js --watch=forever",
-    "start": "npm run build && node server/index.js",
-    "dev": "npm run build && (npm run watch & node --watch-path=server server/index.js)",
-    "crawl": "node server/crawler/cli.js",
+    "start": "npm run build && node --env-file-if-exists=.env server/index.js",
+    "dev": "npm run build && (npm run watch & node --env-file-if-exists=.env --watch-path=server server/index.js)",
+    "crawl": "node --env-file-if-exists=.env server/crawler/cli.js",
     "test": "node --test"
   },
   "engines": {

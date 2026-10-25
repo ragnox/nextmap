@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseRobots, robotsAllows } from '../server/crawler/polite.js';
-import { parseTour } from '../server/crawler/bergfex.js';
+import { parseTour, parseGpx } from '../server/crawler/bergfex.js';
 import { pieces, chain, kindOf, NUMBERED } from '../server/crawler/osm.js';
 import { nameRoutes, mergePieces } from '../server/crawler/index.js';
 
@@ -43,6 +43,16 @@ test('bergfex tour page: start point, stats, difficulty', () => {
   assert.equal(r.difficulty, 'mittel');
   assert.deepEqual(r.stats, { length: 12580, ascent: 1191, min: 1196, max: 2438, duration: 3 + 23 / 60 });
   assert.equal(parseTour('<html></html>', 'https://www.bergfex.at/x/1,y/', 'wanderung'), null, 'no start point, no route');
+});
+
+test('GPX: track segments, attributes in either order, routes as a fallback', () => {
+  const trk = `<?xml version="1.0"?><gpx version="1.1"><trk><name>x</name>
+    <trkseg><trkpt lat="47.1" lon="11.8"><ele>1000</ele></trkpt><trkpt lon="11.81" lat="47.11"/></trkseg>
+    <trkseg><trkpt lat="47.2" lon="11.9"></trkpt></trkseg></trk></gpx>`;
+  assert.deepEqual(parseGpx(trk), [[[11.8, 47.1], [11.81, 47.11]]], 'one-point segments are dropped');
+  const rte = '<gpx><rte><rtept lat="47" lon="11"/><rtept lat="47.5" lon="11.5"/></rte></gpx>';
+  assert.deepEqual(parseGpx(rte), [[[11, 47], [11.5, 47.5]]]);
+  assert.deepEqual(parseGpx('<html>Bitte anmelden</html>'), []);
 });
 
 test('OSM: clipped geometry splits at nulls, ways chain end to end', () => {
