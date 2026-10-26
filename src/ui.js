@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { KIND_COLORS, routeBounds } from './routes.js';
 import { haversine } from './geo.js';
+import { parseState, stateQuery, LAYERS } from './urlstate.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,7 +16,7 @@ const clock = (t) => new Date(t).toLocaleTimeString('de-AT', { hour: '2-digit', 
 
 
 export function createUI(app) {
-  const { terrain, routes, camera, controls, frame, invalidate, backend } = app;
+  const { terrain, routes, labels, camera, controls, frame, invalidate, backend } = app;
   const local = backend.mode === 'server';            // crawler, bergfex and GPX uploads need the local server
   document.body.classList.toggle('static-site', !local);
   const state = { region: null, all: [], kind: 'all', q: '', sort: 'near', inView: false, selected: null, profile: null, crawling: false, s2: {} };
@@ -28,15 +29,18 @@ export function createUI(app) {
   backend.regions().then((list) => {
     $('region-list').innerHTML = list.map((r) => `<option value="${esc(r.name)}">`).join('');
   });
-  $('region-form').addEventListener('submit', (e) => { e.preventDefault(); goRegion($('region').value, true); });
+  $('region-form').addEventListener('submit', (e) => { e.preventDefault(); goRegion($('region').value, true).then(() => syncUrl(true)); });
 
-  async function goRegion(q, fly) {
+  // camera and route: from a link, or Back/Forward
+  async function goRegion(q, fly, { camera, route } = {}) {
     try {
       const region = await backend.region(q || 'Zillertal');
       state.region = region;
       $('region').value = region.name;
-      app.setRegion(region, { fly });
+      app.setRegion(region, { fly: fly && !camera });
+      if (camera) app.setCamera(camera);
       const data = await loadRoutes();
+      if (route) { const r = state.all.find((x) => x.id === route); if (r) await select(r, { fly: !camera }); }
       // a region nobody has crawled yet: fetch its OpenStreetMap routes right away (the web sites stay on the button)
       if (!state.all.length && !Object.keys(data.sources || {}).length && !state.crawling) {
         $('crawl-status').textContent = `Searching OpenStreetMap for routes in ${region.name}…`;
@@ -101,6 +105,7 @@ export function createUI(app) {
 
   function renderList() {
     const list = state.list || [];
+    sheetSummary();
     const bySrc = {};
     list.forEach((r) => { bySrc[r.source] = (bySrc[r.source] || 0) + 1; });
     $('count').textContent = `${list.length} routes`;
@@ -118,21 +123,28 @@ export function createUI(app) {
   $('list').addEventListener('mouseover', (e) => { const li = e.target.closest('li[data-i]'); routes.hover(li ? state.list[li.dataset.i] : null); invalidate(); });
   $('list').addEventListener('mouseleave', () => { routes.hover(null); invalidate(); });
 
-  document.querySelectorAll('#kind-filter button').forEach((b) => b.addEventListener('click', () => {
-    document.querySelectorAll('#kind-filter button').forEach((x) => x.classList.toggle('on', x === b));
-    state.kind = b.dataset.kind; applyFilter();
-  }));
+  function setKind(kind) {
+    document.querySelectorAll('#kind-filter button').forEach((x) => x.classList.toggle('on', x.dataset.kind === kind));
+    state.kind = kind; applyFilter();
+  }
+  document.querySelectorAll('#kind-filter button').forEach((b) => b.addEventListener('click', () => { setKind(b.dataset.kind); syncUrl(); }));
   let qTimer;
   $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = $('q').value; applyFilter(); }, 150); });
   $('sort').addEventListener('change', () => { state.sort = $('sort').value; applyFilter(); });
   $('in-view').addEventListener('change', () => { state.inView = $('in-view').checked; applyFilter(); });
   let viewTimer;
-  controls.addEventListener('end', () => { if (state.inView || state.sort === 'near') { clearTimeout(viewTimer); viewTimer = setTimeout(applyFilter, 300); } });
+  controls.addEventListener('end', () => {
+    if (state.inView || state.sort === 'near') { clearTimeout(viewTimer); viewTimer = setTimeout(applyFilter, 300); }
+    syncUrl();
+  });
 
   // ------------------------------------------------------------ details
   async function select(r, { fly = true } = {}) {
     state.selected = r; state.profile = null;
     routes.select(r); invalidate();
+    syncUrl(true);
+    sheetSummary();
+    if (r && phone() && side.dataset.sheet === 'peek') setSheet('half');
     if (!r) { $('detail').hidden = true; $('browse').hidden = false; $('crawl-box').hidden = false; return; }
     $('browse').hidden = true; $('crawl-box').hidden = true; $('detail').hidden = false;
     $('d-name').textContent = r.name;
@@ -326,34 +338,132 @@ export function createUI(app) {
     $('s2-info').textContent = `Sentinel-2 ${new Date(s.date).toLocaleDateString('de-AT', { day: 'numeric', month: 'short', year: 'numeric' })} · ${Math.round(s.cloud)}% cloud${season === 'winter' && !st.satellite ? ' · snow on the orthophoto' : ''}`;
     invalidate();
   }
-  document.querySelectorAll('#season button').forEach((b) => b.addEventListener('click', () => {
-    document.querySelectorAll('#season button').forEach((x) => x.classList.toggle('on', x === b));
-    terrain.set({ season: b.dataset.season });
-    refreshS2(); invalidate();
-  }));
-  $('imagery').addEventListener('change', () => {
-    const v = $('imagery').value;
-    terrain.set(v === 's2' ? { satellite: true } : { satellite: false, imagery: v });
-    refreshS2(); invalidate();
+  function setSeason(season) {
+    document.querySelectorAll('#season button').forEach((x) => x.classList.toggle('on', x.dataset.season === season));
+    terrain.set({ season }); refreshS2(); invalidate();
+  }
+  function setImagery(v) {
+    $('imagery').value = v;
+    terrain.set(v === 's2' ? { satellite: true } : { satellite: false, imagery: v }); refreshS2(); invalidate();
+  }
+  function setHybrid(on) {
+    document.querySelectorAll('#mapstyle button').forEach((x) => x.classList.toggle('on', (x.dataset.style === 'hybrid') === on));
+    terrain.set({ hybrid: on }); labels.visible = on; invalidate();
+  }
+  function setLayers(list, showRoutes) {
+    $('l-slope').checked = list.includes('slope'); $('l-contours').checked = list.includes('contours');
+    document.querySelectorAll('[data-tiris]').forEach((c) => { c.checked = list.includes(c.dataset.tiris); });
+    $('l-routes').checked = showRoutes;
+    readLayers();
+  }
+  function readLayers() {
+    terrain.set({ slope: $('l-slope').checked ? 0.6 : 0, contours: $('l-contours').checked ? 0.8 : 0,
+      tiris: [...document.querySelectorAll('[data-tiris]:checked')].map((x) => x.dataset.tiris) });
+    $('slope-legend').hidden = !$('l-slope').checked;
+    routes.visible = $('l-routes').checked; invalidate();
+  }
+  document.querySelectorAll('#season button').forEach((b) => b.addEventListener('click', () => { setSeason(b.dataset.season); syncUrl(); }));
+  $('imagery').addEventListener('change', () => { setImagery($('imagery').value); syncUrl(); });
+  document.querySelectorAll('#mapstyle button').forEach((b) => b.addEventListener('click', () => { setHybrid(b.dataset.style === 'hybrid'); syncUrl(); }));
+  for (const el of [$('l-routes'), $('l-slope'), $('l-contours'), ...document.querySelectorAll('[data-tiris]')]) el.addEventListener('change', () => { readLayers(); syncUrl(); });
+  $('sun').addEventListener('input', () => { app.setSun($('sun').value / 100); syncUrl(); });
+
+  // ------------------------------------------------------------ the address bar: every view is a link
+  let quiet = 0, urlTimer;
+  function collectState() {
+    return {
+      region: state.region?.name, camera: app.cameraState(), season: terrain.settings.season, imagery: $('imagery').value,
+      hybrid: terrain.settings.hybrid, routes: routes.visible, kind: state.kind, route: state.selected?.id || null, sun: Number($('sun').value),
+      layers: LAYERS.filter((l) => (l === 'slope' ? $('l-slope').checked : l === 'contours' ? $('l-contours').checked : document.querySelector(`[data-tiris="${l}"]`)?.checked)),
+    };
+  }
+  // region and route changes make history entries (Back works); moving the map and switching layers replace the entry
+  function syncUrl(push = false) {
+    if (quiet || !state.region) return;
+    clearTimeout(urlTimer);
+    urlTimer = setTimeout(() => {
+      const q = stateQuery(collectState()), url = `${location.pathname}${q ? `?${q}` : ''}`;
+      if (url === location.pathname + location.search) return;
+      history[push ? 'pushState' : 'replaceState'](null, '', url);
+    }, push ? 0 : 300);
+  }
+  function applySettings(st) {
+    setSeason(st.season); setImagery(st.imagery); setHybrid(st.hybrid); setLayers(st.layers, st.routes); setKind(st.kind);
+    $('sun').value = st.sun; app.setSun(st.sun / 100);
+  }
+  window.addEventListener('popstate', async () => {
+    const st = parseState(location.search);
+    quiet++;
+    try {
+      applySettings(st);
+      if (st.region && st.region !== state.region?.name) await goRegion(st.region, false, { camera: st.camera, route: st.route });
+      else {
+        if (st.camera) app.setCamera(st.camera);
+        if ((st.route || null) !== (state.selected?.id || null)) await select(state.all.find((r) => r.id === st.route) || null, { fly: !st.camera });
+      }
+    } finally { quiet--; }
   });
-  $('l-routes').addEventListener('change', () => { routes.visible = $('l-routes').checked; invalidate(); });
-  $('l-slope').addEventListener('change', () => { terrain.set({ slope: $('l-slope').checked ? 0.6 : 0 }); $('slope-legend').hidden = !$('l-slope').checked; invalidate(); });
-  $('l-contours').addEventListener('change', () => { terrain.set({ contours: $('l-contours').checked ? 0.8 : 0 }); invalidate(); });
-  document.querySelectorAll('[data-tiris]').forEach((c) => c.addEventListener('change', () => {
-    terrain.set({ tiris: [...document.querySelectorAll('[data-tiris]:checked')].map((x) => x.dataset.tiris) }); invalidate();
-  }));
-  $('sun').addEventListener('input', () => app.setSun($('sun').value / 100));
 
   // phones: the layer panel opens from a button, the side panel is a bottom sheet that expands from its header
   $('layers-btn').addEventListener('click', () => {
     const open = $('layers').classList.toggle('open');
     $('layers-btn').setAttribute('aria-expanded', open);
   });
-  document.querySelector('#side > header').addEventListener('click', (e) => {
-    if (window.innerWidth > 760 || e.target.closest('form')) return;
-    $('side').classList.toggle('expanded');
+
+  // the bottom sheet on phones: peek (only the search), half, or full; the map gets everything above it
+  const side = $('side'), phone = () => window.innerWidth <= 760;
+  const sheetHeights = () => {
+    const H = window.innerHeight, peek = side.querySelector('header').offsetHeight + 2;
+    return { peek, half: Math.round(H * 0.48), full: H - 64 };
+  };
+  function setSheet(name, px) {
+    if (!phone()) { document.documentElement.style.removeProperty('--sheet-h'); return; }
+    const h = px ?? sheetHeights()[name];
+    side.dataset.sheet = name;
+    document.documentElement.style.setProperty('--sheet-h', `${h}px`);
+  }
+  const relayout = () => window.dispatchEvent(new Event('resize'));
+  side.addEventListener('transitionend', (e) => { if (e.target === side) relayout(); });
+  // drag the handle: the sheet follows the finger and snaps to the nearest height
+  let drag = null;
+  $('sheet-handle').addEventListener('pointerdown', (e) => {
+    if (!phone()) return;
+    drag = { y: e.clientY, h: side.offsetHeight, moved: false };
+    $('sheet-handle').setPointerCapture(e.pointerId);
+    side.classList.add('dragging');
   });
-  $('side').addEventListener('transitionend', () => window.dispatchEvent(new Event('resize')));
+  $('sheet-handle').addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dy = drag.y - e.clientY;
+    if (Math.abs(dy) > 4) drag.moved = true;
+    const { peek, full } = sheetHeights();
+    document.documentElement.style.setProperty('--sheet-h', `${Math.min(Math.max(drag.h + dy, peek), full)}px`);
+    relayout();
+  });
+  $('sheet-handle').addEventListener('pointerup', () => {
+    if (!drag) return;
+    side.classList.remove('dragging');
+    const hs = sheetHeights(), cur = side.offsetHeight;
+    if (!drag.moved) setSheet(side.dataset.sheet === 'peek' ? 'half' : 'peek');
+    else setSheet(Object.entries(hs).sort((a, b) => Math.abs(a[1] - cur) - Math.abs(b[1] - cur))[0][0]);
+    drag = null;
+    setTimeout(relayout, 260);
+  });
+  $('sheet-handle').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSheet(side.dataset.sheet === 'peek' ? 'half' : 'peek'); } });
+  window.addEventListener('resize', () => { if (!drag && phone()) document.documentElement.style.setProperty('--sheet-h', `${sheetHeights()[side.dataset.sheet || 'peek']}px`); });
+  setSheet('peek'); relayout();
+  // tapping the map closes the layer panel; the attribution opens on a tap
+  app.renderer.domElement.addEventListener('pointerdown', () => { if (phone()) { $('layers').classList.remove('open'); $('layers-btn').setAttribute('aria-expanded', false); } });
+  $('status').addEventListener('click', () => { if (phone()) $('status').classList.toggle('open'); });
+  // fullscreen where the browser allows it (not on iPhones; there, "Add to Home Screen" opens without browser bars)
+  if (document.fullscreenEnabled) {
+    $('fullscreen').hidden = false;
+    $('fullscreen').addEventListener('click', () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}));
+  }
+  function sheetSummary() {
+    $('sheet-summary').textContent = state.selected ? state.selected.name
+      : `${state.region?.name || ''} · ${(state.list || state.all).length} routes`;
+  }
 
   const headingNow = () => (controls.heading * 180) / Math.PI;
 
@@ -410,6 +520,10 @@ export function createUI(app) {
     }
   }
 
-  goRegion('Zillertal', false);
-  return { frame: frameUpdate, busy: () => false };
+  // start from the link (or Zillertal)
+  const start = parseState(location.search);
+  quiet++;
+  applySettings(start);
+  goRegion(start.region || 'Zillertal', false, { camera: start.camera, route: start.route }).finally(() => { quiet--; syncUrl(); });
+  return { frame: frameUpdate, busy: () => false, syncUrl };
 }

@@ -6,7 +6,7 @@ import { terrainVertex, terrainFragment } from './shaders.js';
 import { EARTH_R } from './geo.js';
 
 const N = 256, S = N + 3, SEG = 64;
-const ROOT_Z = 8, MAX_Z = 17, S2_MAX_Z = 14, TIRIS_MIN_Z = 12, ROUTES_MIN_Z = 9;
+const ROOT_Z = 8, MAX_Z = 17, S2_MAX_Z = 14, TIRIS_MIN_Z = 12, ROUTES_MIN_Z = 9, HYBRID_MIN_Z = 10;
 const MAX_LOADS = 8, MAX_TILES = 260, ROUTE_DRAWS_PER_FRAME = 8;
 
 // ---------------------------------------------------------------- shared grid with skirts
@@ -47,6 +47,7 @@ class Tile {
     this.used = 0;
     this.s2 = {};                           // season -> { state, tex }
     this.tiris = null;                      // { key, state, tex }
+    this.hybrid = null;                     // { state, tex }: roads, tracks and trails
     this.routes = null;                     // { version, tex, canvas }
   }
   get key() { return `${this.z}/${this.x}/${this.y}`; }
@@ -57,6 +58,7 @@ class Tile {
     for (const s of Object.values(this.s2)) s.tex?.dispose();
     this.s2 = {};
     this.tiris?.tex?.dispose(); this.tiris = null;
+    this.hybrid?.tex?.dispose(); this.hybrid = null;
     this.routes?.tex?.dispose(); this.routes = null;
     this.dem = null; this.state = 0;
   }
@@ -77,7 +79,7 @@ export class Terrain {
     this.splitPx = 420;
     this.settings = {
       season: 'summer', imagery: 'ortho', satellite: false, slope: 0, contours: 0, contourStep: 20,
-      tiris: [], relief: 0.55, hazeColor: new THREE.Color(0xc5d3e0), hazeDensity: 1 / 200000, sunDir: new THREE.Vector3(0.3, 0.8, 0.5).normalize(),
+      tiris: [], hybrid: false, relief: 0.55, hazeColor: new THREE.Color(0xc5d3e0), hazeDensity: 1 / 200000, sunDir: new THREE.Vector3(0.3, 0.8, 0.5).normalize(),
     };
     this.s2Scenes = {};                     // season -> scene id
     this.routeLayer = null;
@@ -117,7 +119,7 @@ export class Terrain {
     const frustum = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     const K = this.renderer.domElement.clientHeight / (2 * Math.tan((camera.fov * Math.PI) / 360));
     const cam = camera.position, box = new THREE.Box3();
-    const draw = [], wanted = new Map(), s2Wanted = new Map(), tirisWanted = new Map();
+    const draw = [], wanted = new Map(), s2Wanted = new Map(), tirisWanted = new Map(), hybridWanted = new Map();
     const season = this.settings.season;
     const needS2 = (season === 'winter' || this.settings.satellite) && this.s2Scenes[season];
     const tirisKey = this.settings.tiris.join(',');
@@ -153,12 +155,14 @@ export class Terrain {
         if (!s2t.s2[season]) want(s2Wanted, s2t, dist);
       }
       if (tirisKey && t.z >= TIRIS_MIN_Z && (!t.tiris || t.tiris.key !== tirisKey)) want(tirisWanted, t, dist);
+      if (this.settings.hybrid && t.z >= HYBRID_MIN_Z && !t.hybrid) want(hybridWanted, t, dist);
     };
     this.roots.forEach(visit);
 
     this.schedule('tile', wanted, (t) => this.loadTile(t));
     if (needS2) this.schedule('s2', s2Wanted, (t) => this.loadS2(t, season, this.s2Scenes[season]), 6);
     if (tirisKey) this.schedule('tiris', tirisWanted, (t) => this.loadTiris(t, tirisKey), 4);
+    if (this.settings.hybrid) this.schedule('hybrid', hybridWanted, (t) => this.loadHybrid(t), 6);
     this.render(draw, needS2, tirisKey, cam);
     if (this.frameNo % 60 === 0) this.evict();
   }
@@ -262,6 +266,17 @@ export class Terrain {
     }
   }
 
+  async loadHybrid(t) {
+    t.hybrid = { state: 1 };
+    try {
+      const b = await this.backend.hybridTile(t.z, t.x, t.y);
+      t.hybrid = { state: 2, tex: b ? this.texture(b) : null };
+    } catch {
+      t.hybrid = { state: 3 };
+      setTimeout(() => { if (t.hybrid?.state === 3) t.hybrid = null; }, 10000);
+    }
+  }
+
   async loadTiris(t, key) {
     t.tiris = { key, state: 1 };
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
@@ -283,6 +298,7 @@ export class Terrain {
       uImg: { value: gray }, uImgXf: { value: new THREE.Vector4() },
       uS2: { value: blank }, uS2Xf: { value: new THREE.Vector4() }, uHasS2: { value: 0 },
       uTiris: { value: blank }, uTirisXf: { value: new THREE.Vector4() }, uHasTiris: { value: 0 },
+      uHybrid: { value: blank }, uHybridXf: { value: new THREE.Vector4() }, uHasHybrid: { value: 0 },
       uRoutes: { value: blank }, uRoutesXf: { value: new THREE.Vector4() }, uHasRoutes: { value: 0 },
       uSeason: { value: 0 }, uImagery: { value: 0 }, uSlope: { value: 0 }, uContours: { value: 0 }, uContourStep: { value: 20 },
       uSunDir: { value: new THREE.Vector3() }, uRelief: { value: 0.5 }, uHazeColor: { value: new THREE.Color() }, uHazeDensity: { value: 0 },
@@ -293,6 +309,7 @@ export class Terrain {
 
   render(draw, needS2, tirisKey, cam) {
     draw.sort((a, b) => a.dist - b.dist);
+    this.lastDraw = draw;
     const st = this.settings, season = st.season;
     let routeBudget = ROUTE_DRAWS_PER_FRAME;
     this.pendingRoutes = false;
@@ -324,6 +341,12 @@ export class Terrain {
         let s = t;
         while (s && !(s.tiris?.key === tirisKey && s.tiris.state === 2)) s = s.parent;
         if (s && s.z >= TIRIS_MIN_Z) { u.uTiris.value = s.tiris.tex; xfTo(t, s, u.uTirisXf.value); u.uHasTiris.value = 1; }
+      }
+      u.uHasHybrid.value = 0;
+      if (st.hybrid && t.z >= HYBRID_MIN_Z - 1) {
+        let s = t;
+        while (s && !(s.hybrid?.state === 2)) s = s.parent;
+        if (s && s.hybrid.tex && s.z >= HYBRID_MIN_Z) { u.uHybrid.value = s.hybrid.tex; xfTo(t, s, u.uHybridXf.value); u.uHasHybrid.value = 1; }
       }
       u.uHasRoutes.value = 0;
       if (this.routeLayer?.visible && t.z >= ROUTES_MIN_Z) {
@@ -358,7 +381,7 @@ export class Terrain {
 
   evict() {
     const loaded = [];
-    this.forEachTile((t) => { if (t.state === 2 || t.routes || Object.keys(t.s2).length || t.tiris) loaded.push(t); });
+    this.forEachTile((t) => { if (t.state === 2 || t.routes || Object.keys(t.s2).length || t.tiris || t.hybrid) loaded.push(t); });
     if (loaded.length <= MAX_TILES) return;
     loaded.sort((a, b) => a.used - b.used || b.z - a.z);
     for (const t of loaded.slice(0, loaded.length - MAX_TILES)) {

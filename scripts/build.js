@@ -34,6 +34,9 @@ if (arg !== '--static') {
     .replace('src="app.js"', `src="${app}"`)
     .replace('<meta charset="utf-8">', '<meta charset="utf-8">\n<meta name="nextmap-mode" content="static">');
   fs.writeFileSync(path.join(DIST, 'index.html'), html);
+  // the home-screen app: manifest and icons
+  fs.copyFileSync(at('public/manifest.webmanifest'), path.join(DIST, 'manifest.webmanifest'));
+  fs.cpSync(at('public/icons'), path.join(DIST, 'icons'), { recursive: true });
 
   // route snapshots: OpenStreetMap only (ODbL, attributed in the page); bergfex's tours are for local use
   const KEEP = ['id', 'source', 'kind', 'name', 'ref', 'network', 'operator', 'difficulty', 'from', 'to', 'description', 'url', 'website', 'start', 'lines', 'stats', 'top', 'parts', 'goal'];
@@ -59,6 +62,7 @@ if (arg !== '--static') {
     '/*', '  X-Content-Type-Options: nosniff', '  Referrer-Policy: strict-origin-when-cross-origin',
     '/', '  Cache-Control: no-cache', '/index.html', '  Cache-Control: no-cache',
     '/data/*', '  Cache-Control: public, max-age=600',
+    '/manifest.webmanifest', '  Content-Type: application/manifest+json',
     ...[worker, app, css].flatMap((f) => [`/${f}`, '  Cache-Control: public, max-age=31536000, immutable']),
   ].join('\n') + '\n');
 

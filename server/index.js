@@ -13,7 +13,7 @@ import { profile } from './geo.js';
 
 const PORT = Number(process.env.PORT || 5173);
 const PUBLIC = path.join(ROOT, 'public');
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
 
 const send = (res, status, body, type = 'application/json', extra = {}) => {
   res.writeHead(status, { 'Content-Type': type, ...extra });

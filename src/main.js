@@ -7,6 +7,7 @@ import { RouteLayer } from './routes.js';
 import { createUI } from './ui.js';
 import { Controls } from './controls.js';
 import { createBackend } from './backend.js';
+import { Labels } from './labels.js';
 
 const view = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -32,6 +33,7 @@ const backend = await createBackend();
 const terrain = new Terrain(renderer, scene, frame, backend);
 const routes = new RouteLayer();
 terrain.routeLayer = routes;
+const labels = new Labels(document.getElementById('labels'), backend, terrain, frame);
 
 const visualCenter = new THREE.Vector2();
 const controls = new Controls(camera, renderer.domElement, terrain, visualCenter);
@@ -82,6 +84,19 @@ function setRegion(region, { fly = true } = {}) {
   invalidate();
 }
 
+// the camera as latitude, longitude, altitude, heading and pitch (for links), and back
+let settled = false;
+function cameraState() {
+  const p = camera.position, [lon, lat] = frame.toLonLat(p.x, p.z);
+  return { lat, lon, alt: p.y, heading: (controls.heading * 180) / Math.PI, pitch: (controls.pitch * 180) / Math.PI };
+}
+function setCamera({ lat, lon, alt, heading, pitch }) {
+  const [x, z] = frame.fromLonLat(lon, lat);
+  controls.setPose(x, alt, z, (heading * Math.PI) / 180, (pitch * Math.PI) / 180);
+  settled = true;                                      // a link's view is not replaced by the start view
+  invalidate();
+}
+
 // ---------------------------------------------------------------- picking
 const toMerc = (p) => { const [lon, lat] = frame.toLonLat(p.x, p.z); return { lon, lat, mx: lonToX(lon), my: latToY(lat) }; };
 function pickAt(clientX, clientY) {
@@ -109,7 +124,8 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
-const ui = createUI({ terrain, routes, camera, controls, frame, flyTo, flyToBounds, lookAt, setRegion, setSun, pickAt, invalidate, renderer, backend });
+labels.onChange = invalidate;
+const ui = createUI({ terrain, routes, labels, camera, controls, frame, flyTo, flyToBounds, lookAt, setRegion, setSun, pickAt, invalidate, renderer, backend, cameraState, setCamera });
 
 let last = performance.now();
 function tick(now) {
@@ -127,19 +143,20 @@ function tick(now) {
   renderer.render(skyScene, skyCam);
   renderer.clearDepth();
   renderer.render(scene, camera);
+  labels.update(camera, terrain.lastDraw || []);
   ui.frame();
 }
 
 resize();
 controls.setView(lookAt(START.lon, START.lat, { dist: 16000, pitch: 32, heading: 180 }));
 // settle the start view on the real ground once the first tiles are in
-let settled = false;
 terrain.onChange = () => {
   invalidate();
   if (!settled && terrain.heightAt(controls.target.x, controls.target.z) !== null) {
     settled = true;
     controls.setView(lookAt(START.lon, START.lat, { dist: 16000, pitch: 32, heading: 180 }));
+    ui.syncUrl();
   }
 };
 requestAnimationFrame(tick);
-window.nextmap = { terrain, routes, camera, controls, frame, flyTo, lookAt, ui, backend };
+window.nextmap = { terrain, routes, labels, camera, controls, frame, flyTo, lookAt, ui, backend };

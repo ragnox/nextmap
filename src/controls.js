@@ -273,7 +273,16 @@ export class Controls extends THREE.EventDispatcher {
   }
   setView({ pos, tgt }) {
     this.camera.position.copy(pos); this.camera.lookAt(tgt); this.syncFromCamera(); this.target.copy(tgt);
+    this.changed = true;
   }
+  // place the camera exactly (from a link)
+  setPose(x, y, z, heading, pitch) {
+    this.flight = null; this.glide = null; this.spin = null;
+    this.camera.position.set(x, y, z);
+    this.heading = heading; this.pitch = Math.min(Math.max(pitch, MIN_PITCH), LOOK_MAX_PITCH);
+    this.apply(); this.changed = true;
+  }
+
   // turn to north around the middle of the view
   northUp() {
     const pivot = this.pivotAt(), turn = Math.atan2(Math.sin(-this.heading), Math.cos(-this.heading));

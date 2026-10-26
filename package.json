@@ -18,7 +18,9 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^2.0.5",
     "jpeg-js": "^0.4.4",
+    "pbf": "^4.0.2",
     "pngjs": "^7.0.0",
     "three": "^0.170.0"
   },

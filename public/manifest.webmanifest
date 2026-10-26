@@ -1,0 +1,17 @@
+{
+  "name": "nextmap · Tirol 3D",
+  "short_name": "nextmap",
+  "description": "3D map of Tyrol: laser-scan terrain, summer and winter imagery, hiking, bike and ski-touring routes",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#12161b",
+  "theme_color": "#12161b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

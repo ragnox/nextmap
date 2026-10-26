@@ -1,10 +1,12 @@
-// Data worker for the static site (no nextmap server behind it): builds the elevation tiles from the tiris WCS and
+// Data worker. On the static site (no nextmap server behind it) it builds the elevation tiles from the tiris WCS and
 // Terrarium (kept in the browser's Cache Storage), patches orthophoto tiles, composes the Sentinel-2 snow tiles and
-// samples elevations for profiles, all with the same code the server uses (shared/).
+// samples elevations for profiles, all with the same code the server uses (shared/). In both modes it draws the
+// hybrid layer and reads the names for labels from OpenStreetMap vector tiles (hybrid.js).
 import { buildDemTile, decodeTerrarium, terrariumUrl, sampleTile } from '../shared/dem.js';
 import { limiter, once, tileSize, HALF } from '../shared/geo.js';
 import { basemapUrl, tirisOrthoUrl, eoxUrl, eoxFallback, needsPatch, patchWhite, overlayIds, overlayUrl } from '../shared/imagery.js';
 import { visualUrl, ndsiUrl, composeSnow } from '../shared/sentinel.js';
+import { hybridTile, labelsTile } from './hybrid.js';
 
 const wcs = limiter(6), web = limiter(12);
 const dedupe = once();
@@ -104,7 +106,7 @@ async function s2(sid, z, x, y) {
 
 // ---------------------------------------------------------------- messages
 // a copy of the tile goes out, since sending moves the buffer and the tile may still be in use here
-const OPS = { dem: async (...a) => (await dem(...a)).slice(0), sample, imagery, s2 };
+const OPS = { dem: async (...a) => (await dem(...a)).slice(0), sample, imagery, s2, hybrid: hybridTile, labels: labelsTile };
 self.onmessage = async ({ data: { id, op, args } }) => {
   try {
     const result = await OPS[op](...args);

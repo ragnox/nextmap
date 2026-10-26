@@ -75,6 +75,14 @@ select option { background: #1d2228; }
 #layers .checks { display: grid; gap: 5px; margin-top: 10px; font-size: 13px; }
 #layers .checks label { display: flex; gap: 7px; align-items: center; cursor: pointer; }
 #s2-info { margin-top: 4px; }
+#mapstyle { margin-top: 10px; }
+#labels { position: fixed; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
+.label { position: absolute; left: 0; top: 0; translate: -50% -100%; white-space: nowrap; font-weight: 600; font-size: 12px; color: #fff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(0, 0, 0, 0.8); letter-spacing: 0.01em; }
+.label.peak::before { content: '▲ '; font-size: 9px; color: #ffd8a8; }
+.label.saddle::before { content: '⌒ '; color: #d8e6ff; }
+.label.place.town, .label.place.city { font-size: 14px; font-weight: 700; }
+.label.place.hamlet { font-weight: 500; font-size: 11px; opacity: 0.9; }
 .legend { display: flex; margin-top: 8px; font-size: 10px; }
 .legend span { flex: 1; border-top: 6px solid var(--c); padding-top: 2px; color: var(--muted); }
 #sun { width: 100%; }
@@ -93,7 +101,7 @@ select option { background: #1d2228; }
 kbd { display: inline-block; min-width: 18px; padding: 0 5px; margin: 0 1px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 4px;
   font: 11px/17px ui-monospace, Menlo, monospace; text-align: center; }
 
-#status { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; display: flex; gap: 16px; align-items: center; padding: 0 14px;
+#status { position: fixed; left: 0; right: 0; bottom: 0; height: 30px; padding-bottom: env(safe-area-inset-bottom); display: flex; gap: 16px; align-items: center; padding: 0 14px;
   background: rgba(12, 14, 17, 0.8); font-size: 12px; z-index: 6; white-space: nowrap; overflow: hidden; }
 #cursor { font-variant-numeric: tabular-nums; min-width: 260px; }
 #loading { color: var(--accent); min-width: 110px; }
@@ -102,26 +110,36 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; margin: 0 1px; bor
   transform: translate(12px, -50%); white-space: nowrap; border: 1px solid var(--line); }
 
 #layers-btn { display: none; }
+#sheet-handle { display: none; }
+
+/* phones: the map fills the screen; the side panel is a bottom sheet (peek, half, full) pulled up by its handle */
 @media (max-width: 760px) {
-  /* the side panel becomes a bottom sheet; tap its header to expand it */
-  #side { top: auto; bottom: 30px; left: 0; right: 0; width: auto; height: 46%; border-radius: 14px 14px 0 0; transition: height 0.2s; }
-  #side.expanded { height: calc(100% - 90px); }
+  html, body { height: 100dvh; }
+  #side { top: auto; bottom: 0; left: 0; right: 0; width: auto; height: var(--sheet-h, 72px); border-radius: 16px 16px 0 0;
+    padding-bottom: env(safe-area-inset-bottom); transition: height 0.22s ease; border-bottom: none; }
+  #side.dragging { transition: none; }
   #side > header, #side > section { padding: 8px 12px; }
-  #side > header { position: relative; cursor: pointer; padding-top: 14px; }
-  #side > header::before { content: ''; position: absolute; top: 5px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: rgba(255, 255, 255, 0.3); }
-  .brand { font-size: 15px; margin-bottom: 6px; }
+  #side > header { padding-top: 0; }
+  #sheet-handle { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 7px 0 6px; cursor: grab; touch-action: none; }
+  #sheet-handle .grip { width: 38px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.35); }
+  #sheet-summary { font-size: 12px; color: var(--muted); max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brand { display: none; }
+  #side[data-sheet="peek"] > section { visibility: hidden; }
   #crawl-status { margin-top: 4px; }
   #browse .row { margin-top: 6px; }
   #list { margin: 6px -12px 0; }
   #list li { padding: 7px 12px; }
-  #layers-btn { display: grid; place-items: center; top: 8px; right: 8px; width: 40px; height: 40px; padding: 0; border-radius: 50%; }
-  #layers { display: none; width: 220px; top: 56px; right: 8px; padding: 10px; }
+  #layers-btn { display: grid; place-items: center; top: calc(8px + env(safe-area-inset-top)); right: 8px; width: 42px; height: 42px; padding: 0; border-radius: 50%; }
+  #layers { display: none; width: 230px; top: calc(58px + env(safe-area-inset-top)); right: 8px; padding: 10px; max-height: calc(100dvh - var(--sheet-h, 72px) - 80px); overflow-y: auto; }
   #layers.open { display: block; }
-  #nav { bottom: calc(46% + 40px); }
+  #nav { bottom: calc(var(--sheet-h, 72px) + 28px); right: 8px; transition: bottom 0.22s ease; }
   #nav #help-btn { display: none; }
-  #side.expanded ~ #nav { display: none; }
+  #side[data-sheet="full"] ~ #nav { display: none; }
   #help .keys { grid-template-columns: 1fr; gap: 2px; }
   #help .keys span { margin-bottom: 6px; }
-  #status .attr { display: none; }
-  #cursor { min-width: 0; }
+  /* the status line shrinks to the attribution, just above the sheet; tap it to read all */
+  #status { left: 0; right: 0; bottom: var(--sheet-h, 72px); height: auto; padding: 3px 10px; background: none; z-index: 4; pointer-events: auto; }
+  #status #cursor, #status #loading { display: none; }
+  #status .attr { margin-left: 0; font-size: 9px; color: rgba(255, 255, 255, 0.75); text-shadow: 0 0 2px #000; white-space: nowrap; }
+  #status.open .attr { white-space: normal; background: rgba(12, 14, 17, 0.85); padding: 6px 8px; border-radius: 8px; }
 }

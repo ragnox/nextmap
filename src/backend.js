@@ -25,9 +25,29 @@ async function bitmap(url) {
   return createImageBitmap(await res.blob(), { imageOrientation: 'none', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
 }
 
+// the data worker, started on first use
+let workerCall = null;
+function dataWorker() {
+  if (workerCall) return workerCall;
+  const worker = new Worker(new URL(globalThis.NEXTMAP_WORKER || 'worker.js', document.baseURI), { type: 'module' });
+  let seq = 0;
+  const calls = new Map();
+  worker.onmessage = ({ data: { id, result, error } }) => {
+    const c = calls.get(id); calls.delete(id);
+    error ? c.reject(new Error(error)) : c.resolve(result);
+  };
+  workerCall = (op, ...args) => new Promise((resolve, reject) => { const id = ++seq; calls.set(id, { resolve, reject }); worker.postMessage({ id, op, args }); });
+  return workerCall;
+}
+// both modes draw the hybrid layer and read label names in the browser
+const hybridParts = {
+  hybridTile: (z, x, y) => dataWorker()('hybrid', z, x, y),
+  labels: (z, x, y) => dataWorker()('labels', z, x, y),
+};
+
 function serverBackend() {
   return {
-    mode: 'server',
+    mode: 'server', ...hybridParts,
     demTile: (z, x, y) => fetch(`api/dem/${z}/${x}/${y}`).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }),
     imagery: (layer, z, x, y, extra) => bitmap(`api/img/${layer}/${z}/${x}/${y}${extra ? `?l=${extra}` : ''}`),
     s2Tile: async (sid, z, x, y) => { const b = await bitmap(`api/s2tile/${sid}/${z}/${x}/${y}`); return b && b.width > 1 ? { bitmap: b } : null; },
@@ -45,14 +65,7 @@ function serverBackend() {
 }
 
 function staticBackend() {
-  const worker = new Worker(new URL(globalThis.NEXTMAP_WORKER || 'worker.js', document.baseURI), { type: 'module' });
-  let seq = 0;
-  const calls = new Map();
-  worker.onmessage = ({ data: { id, result, error } }) => {
-    const c = calls.get(id); calls.delete(id);
-    error ? c.reject(new Error(error)) : c.resolve(result);
-  };
-  const call = (op, ...args) => new Promise((resolve, reject) => { const id = ++seq; calls.set(id, { resolve, reject }); worker.postMessage({ id, op, args }); });
+  const call = dataWorker();
 
   const geocoded = new Map();
   const none = () => Promise.reject(Object.assign(new Error('only in the local app'), { status: 501 }));
@@ -66,7 +79,7 @@ function staticBackend() {
     return regionFromHit(hit, name);
   };
   return {
-    mode: 'static',
+    mode: 'static', ...hybridParts,
     demTile: (z, x, y) => call('dem', z, x, y),
     imagery: (layer, z, x, y, extra) => call('imagery', layer, z, x, y, extra),
     s2Tile: async (sid, z, x, y) => { const rgba = await call('s2', sid, z, x, y); return rgba ? { rgba } : null; },

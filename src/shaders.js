@@ -53,6 +53,9 @@ uniform float uHasS2;
 uniform sampler2D uTiris;    // Land Tirol overlay (transparent)
 uniform vec4 uTirisXf;
 uniform float uHasTiris;
+uniform sampler2D uHybrid;   // roads, tracks and trails (transparent)
+uniform vec4 uHybridXf;
+uniform float uHasHybrid;
 uniform sampler2D uRoutes;   // routes drawn for this tile (transparent)
 uniform vec4 uRoutesXf;
 uniform float uHasRoutes;
@@ -152,6 +155,10 @@ void main() {
   if (uHasTiris > 0.5) {
     vec4 t = texture2D(uTiris, xf(uTirisXf));
     col = mix(col, t.rgb, t.a * 0.95);
+  }
+  if (uHasHybrid > 0.5) {
+    vec4 hy = texture2D(uHybrid, xf(uHybridXf));
+    col = mix(col, hy.rgb, hy.a);
   }
   if (uHasRoutes > 0.5) {
     vec4 r = texture2D(uRoutes, xf(uRoutesXf));
