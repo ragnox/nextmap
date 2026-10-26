@@ -13,6 +13,7 @@ export const PRESETS = [
   { name: 'Sellrain', bbox: [11.00, 47.10, 11.30, 47.27], view: [11.15, 47.19], bergfex: ['sellrain-innsbruck', 'kuehtai'] },
   { name: 'Wipptal', bbox: [11.30, 46.98, 11.62, 47.25], view: [11.45, 47.10], bergfex: 'wipptal' },
   { name: 'Karwendel', bbox: [11.20, 47.28, 11.80, 47.55], view: [11.45, 47.38], bergfex: ['achensee', 'silberregion-karwendel', 'seefeld-tirol', 'innsbruck'] },
+  { name: 'Rofan', bbox: [11.62, 47.36, 11.99, 47.58], view: [11.789, 47.445], bergfex: ['achensee'] },
   { name: 'Kitzbüheler Alpen', bbox: [11.95, 47.25, 12.65, 47.52], view: [12.30, 47.40], bergfex: ['kitzbueheler-alpen-brixental', 'kitzbuehel', 'st-johann-tirol', 'wilder-kaiser'] },
   { name: 'Paznaun', bbox: [10.05, 46.88, 10.45, 47.12], view: [10.25, 47.00], bergfex: 'paznaun-ischgl' },
   { name: 'Arlberg', bbox: [10.05, 47.07, 10.40, 47.25], view: [10.22, 47.15], bergfex: 'arlberg' },

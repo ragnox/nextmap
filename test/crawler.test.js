@@ -4,7 +4,7 @@ import { parseRobots, robotsAllows } from '../server/crawler/polite.js';
 import { parseTour, parseGpx } from '../server/crawler/bergfex.js';
 import { pieces, chain, kindOf, NUMBERED } from '../server/crawler/osm.js';
 import { nameRoutes, mergePieces, replaceSource } from '../server/crawler/index.js';
-import { bikeAndHike } from '../server/crawler/bikehike.js';
+import { bikeAndHike } from '../shared/routes.js';
 
 test('robots.txt: our own group beats *, longest rule wins, wildcards', () => {
   const groups = parseRobots(`

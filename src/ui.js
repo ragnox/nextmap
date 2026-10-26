@@ -38,8 +38,8 @@ export function createUI(app) {
       app.setRegion(region, { fly });
       const data = await loadRoutes();
       // a region nobody has crawled yet: fetch its OpenStreetMap routes right away (the web sites stay on the button)
-      if (local && !state.all.length && !Object.keys(data.sources || {}).length && !state.crawling) {
-        $('crawl-status').textContent = `Fetching OpenStreetMap routes for ${region.name}…`;
+      if (!state.all.length && !Object.keys(data.sources || {}).length && !state.crawling) {
+        $('crawl-status').textContent = `Searching OpenStreetMap for routes in ${region.name}…`;
         startCrawl(['osm']);
       }
       state.s2 = {};
@@ -58,7 +58,7 @@ export function createUI(app) {
     const trackNote = t && t.total && t.withTrack < t.total
       ? ` · bergfex tracks ${t.withTrack}/${t.total}${t.waitUntil ? `, more after ${clock(t.waitUntil)}` : t.running ? ', loading' : ''}` : '';
     $('crawl-status').textContent = !local
-      ? (state.all.length ? `${state.all.length} routes from OpenStreetMap, collected ${new Date(data.updated || Object.values(data.sources)[0]?.crawled).toLocaleDateString('de-AT')}.` : 'No routes collected for this region yet.')
+      ? (state.all.length ? `${state.all.length} routes from OpenStreetMap, ${data.searchedHere ? 'searched in this browser' : 'collected'} ${new Date(data.updated || Object.values(data.sources)[0]?.crawled).toLocaleDateString('de-AT')}.` : 'No routes for this region yet. Search the web to find some.')
       : state.all.length ? `${state.all.length} routes cached · ${srcs.join(' · ')}${trackNote}` : 'No routes for this region yet. Search the web to find some.';
     // tracks still arriving in the background: look again in a minute
     clearTimeout(state.trackTimer);

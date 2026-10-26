@@ -1,13 +1,15 @@
 // Crawl jobs: run the route sources for a region one after another, add length/ascent from the DEM to routes that
 // come with geometry, and keep the merged result in cache/routes/<region>.json (saved as results come in).
 import { readJSON, writeJSON } from '../util.js';
-import { profile, haversine } from '../geo.js';
 import { resolveRegion } from './regions.js';
 import { crawlOsm } from './osm.js';
 import { crawlBergfex, fetchTrack, parseGpx, gpxUrl, CATEGORIES as BERGFEX_CATEGORIES } from './bergfex.js';
 import { RateLimited, blockedUntil } from './polite.js';
 import { simplify } from '../geo.js';
-import { bikeAndHike, COMBINE_VERSION } from './bikehike.js';
+import { nameRoutes, mergePieces, bikeAndHike, measureRoute, COMBINE_VERSION } from '../../shared/routes.js';
+import { sampleElevations } from '../dem.js';
+
+export { nameRoutes, mergePieces } from '../../shared/routes.js';
 
 export const SOURCES = {
   osm: { label: 'OpenStreetMap', run: crawlOsm },
@@ -56,13 +58,7 @@ export function remeasure(slug) {
 export const needsRemeasure = (store) => store?.routes?.length && (store.statsVersion !== STATS_VERSION || (store.pois && store.combineVersion !== COMBINE_VERSION));
 
 // length, climb and altitudes of a route's track on the DGM (a source's walking time is kept)
-async function measure(r) {
-  const p = await profile(r.lines, { z: 13, step: 25, maxPts: 1500 });
-  r.stats = { length: p.length, ascent: p.ascent, descent: p.descent, min: p.min, max: p.max, duration: r.stats?.duration ?? null };
-  r.measured = true;
-  const top = p.e.indexOf(Math.max(...p.e.filter((v) => v != null)));
-  if (top >= 0) r.top = [...p.coords[top], p.e[top]];
-}
+const measure = (r) => measureRoute(r, (pts) => sampleElevations(13, pts));
 
 async function addStats(routes, log) {
   const todo = routes.filter((r) => r.lines && !r.measured);
@@ -141,21 +137,6 @@ export function backfillTracks(slug) {
   })().catch((e) => { console.warn('track backfill', slug, e.message); st.running = false; });
 }
 
-// unnamed routes are called after the summit or hut at their highest point, or the nearest village
-export function nameRoutes(routes, pois = []) {
-  const near = (pt, types, maxM) => {
-    let best = null, bd = maxM;
-    for (const p of pois) if (types.includes(p.type)) { const d = haversine(pt, p.at); if (d < bd) { bd = d; best = p; } }
-    return best;
-  };
-  for (const r of routes) {
-    if (!r.generic || !r.top) continue;
-    const dest = near(r.top, ['peak'], 450) || near(r.top, ['hut', 'saddle'], 700) || near(r.top, ['peak', 'hut', 'saddle'], 1500);
-    const place = near(r.start, ['place'], 6000);
-    if (dest) r.name = `${r.name} → ${dest.name}`;
-    else if (place) r.name = `${r.name} · ${place.name}`;
-  }
-}
 
 // Bike & Hike tours from the region's bike and hiking routes, measured like the others
 async function recombine(store, log = () => {}) {
@@ -168,35 +149,6 @@ async function recombine(store, log = () => {}) {
   log(`Bike & Hike: ${combos.length} tours combined from bike and hiking routes`);
 }
 
-// OSM often maps one ski tour as several unnamed ways: merge pieces that got the same name and lie close together
-export function mergePieces(routes) {
-  const out = [], groups = new Map();
-  for (const r of routes) {
-    if (!r.generic || (r.kind !== 'skitour' && r.kind !== 'freeride')) { out.push(r); continue; }
-    const g = groups.get(r.name) || []; groups.set(r.name, g); g.push(r);
-  }
-  for (const g of groups.values()) {
-    const used = new Set();
-    for (const a of g) {
-      if (used.has(a)) continue;
-      used.add(a);
-      const parts = [a];
-      for (const b of g) if (!used.has(b) && parts.some((p) => haversine(p.top || p.start, b.top || b.start) < 2500)) { used.add(b); parts.push(b); }
-      if (parts.length === 1) { out.push(a); continue; }
-      const st = parts.map((p) => p.stats).filter(Boolean);
-      out.push({
-        ...a, id: parts.map((p) => p.id).sort()[0], lines: parts.flatMap((p) => p.lines), parts: parts.map((p) => p.url),
-        start: parts.reduce((lo, p) => ((p.stats?.min ?? 1e9) < (lo.stats?.min ?? 1e9) ? p : lo)).start,
-        top: parts.reduce((hi, p) => ((p.top?.[2] ?? -1) > (hi.top?.[2] ?? -1) ? p : hi)).top,
-        stats: st.length ? {
-          length: st.reduce((s, x) => s + x.length, 0), ascent: Math.max(...st.map((x) => Math.max(x.ascent, x.descent))),
-          descent: Math.max(...st.map((x) => Math.max(x.ascent, x.descent))), min: Math.min(...st.map((x) => x.min)), max: Math.max(...st.map((x) => x.max)), duration: null,
-        } : null,
-      });
-    }
-  }
-  return out;
-}
 
 // a source's routes after a fresh crawl; a crawl of only some bergfex categories ("bergfex:e-mtb") replaces only those
 export function replaceSource(existing, source, fresh, categories) {

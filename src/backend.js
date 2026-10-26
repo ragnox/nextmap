@@ -4,6 +4,7 @@
 import { buildProfile } from '../shared/geo.js';
 import { findScene } from '../shared/sentinel.js';
 import { PRESETS, presetRegion, geocodeUrl, pickGeocodeHit, regionFromHit } from '../shared/regions.js';
+import { createBrowserCrawler } from './crawl.js';
 
 async function getJSON(url, opts) {
   const r = await fetch(url, opts);
@@ -55,23 +56,27 @@ function staticBackend() {
 
   const geocoded = new Map();
   const none = () => Promise.reject(Object.assign(new Error('only in the local app'), { status: 501 }));
+  const crawler = createBrowserCrawler((pts) => call('sample', 13, pts));
+  const region = async (name) => {
+    const p = presetRegion(name);
+    if (p) return p;
+    if (!geocoded.has(name)) geocoded.set(name, getJSON(geocodeUrl(name)).then(pickGeocodeHit));
+    const hit = await geocoded.get(name);
+    if (!hit) throw new Error('not found');
+    return regionFromHit(hit, name);
+  };
   return {
     mode: 'static',
     demTile: (z, x, y) => call('dem', z, x, y),
     imagery: (layer, z, x, y, extra) => call('imagery', layer, z, x, y, extra),
     s2Tile: async (sid, z, x, y) => { const rgba = await call('s2', sid, z, x, y); return rgba ? { rgba } : null; },
     regions: async () => PRESETS.map(({ name, bbox, view }) => ({ name, bbox, view })),
-    region: async (name) => {
-      const p = presetRegion(name);
-      if (p) return p;
-      if (!geocoded.has(name)) geocoded.set(name, getJSON(geocodeUrl(name)).then(pickGeocodeHit));
-      const hit = await geocoded.get(name);
-      if (!hit) throw new Error('not found');
-      return regionFromHit(hit, name);
-    },
-    routes: async (region) => {
-      try { return await getJSON(`data/routes/${region.slug}.json`); }
-      catch { return { region: region.name, slug: region.slug, bbox: region.bbox, view: region.view, sources: {}, routes: [] }; }
+    region,
+    // the published snapshot, or what this browser searched itself if that is newer
+    routes: async (r) => {
+      const [snap, mine] = await Promise.all([getJSON(`data/routes/${r.slug}.json`).catch(() => null), crawler.load(r.slug)]);
+      if (mine && (!snap || mine.updated > snap.updated)) return mine;
+      return snap || { region: r.name, slug: r.slug, bbox: r.bbox, view: r.view, sources: {}, routes: [] };
     },
     profile: (lines) => buildProfile(lines, (pts) => call('sample', 14, pts), { step: 10, maxPts: 3000 }),
     // a scene per season and region, looked up once a day
@@ -82,8 +87,10 @@ function staticBackend() {
       try { localStorage.setItem(key, JSON.stringify(s)); } catch { /* private mode */ }
       return s;
     },
-    sources: async () => [],
-    startCrawl: none, crawlStatus: async () => ({ state: 'idle' }), track: none, attachGpx: none,
+    sources: async () => [{ id: 'osm', label: 'OpenStreetMap' }],
+    startCrawl: async (name) => crawler.start(await region(name)),
+    crawlStatus: async () => crawler.status(),
+    track: none, attachGpx: none,
   };
 }
 

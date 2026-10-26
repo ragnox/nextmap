@@ -55,6 +55,17 @@ async function dem(z, x, y) {
   });
 }
 
+// the grids most recently sampled, so measuring many routes does not read the same tiles again and again
+const grids = new Map();
+async function grid(z, x, y) {
+  const k = `${z}/${x}/${y}`;
+  if (grids.has(k)) { const g = grids.get(k); grids.delete(k); grids.set(k, g); return g; }
+  const g = new Float32Array(await dem(z, x, y));
+  grids.set(k, g);
+  if (grids.size > 120) grids.delete(grids.keys().next().value);
+  return g;
+}
+
 async function sample(z, pts) {
   const size = tileSize(z);
   const key = ([mx, my]) => `${Math.floor((mx + HALF) / size)},${Math.floor((HALF - my) / size)}`;
@@ -62,7 +73,7 @@ async function sample(z, pts) {
   for (const p of pts) tiles.set(key(p), null);
   await Promise.all([...tiles.keys()].map(async (k) => {
     const [tx, ty] = k.split(',').map(Number);
-    try { tiles.set(k, new Float32Array(await dem(z, tx, ty))); } catch { /* unknown there */ }
+    try { tiles.set(k, await grid(z, tx, ty)); } catch { /* unknown there */ }
   }));
   return pts.map((p) => { const g = tiles.get(key(p)); return g ? sampleTile(g, z, p[0], p[1]) : null; });
 }

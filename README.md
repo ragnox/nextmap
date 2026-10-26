@@ -30,7 +30,7 @@ On a phone the route list is a bottom sheet (tap its header to expand it) and th
 
 ## Public site (Cloudflare Pages)
 
-**https://nextmap.pages.dev** is the static build: no server behind it. Visitors' browsers fetch the tiris DGM, the orthophotos and Sentinel-2 directly (all of them allow it) and build the tiles in a web worker with the same code the local server uses (`shared/`), keeping elevation tiles in the browser for the next visit. Routes come from snapshots of the OpenStreetMap crawls in `dist/data/routes/` (with the Bike & Hike tours made only of OSM routes); crawling, bergfex tours and GPX uploads stay in the local app, since bergfex's content is not ours to republish.
+**https://nextmap.pages.dev** is the static build: no server behind it. Visitors' browsers fetch the tiris DGM, the orthophotos and Sentinel-2 directly (all of them allow it) and build the tiles in a web worker with the same code the local server uses (`shared/`), keeping elevation tiles in the browser for the next visit. Routes come from snapshots of the OpenStreetMap crawls in `dist/data/routes/` (with the Bike & Hike tours made only of OSM routes). For any other region, “Search the web for routes” (or simply opening a region without a snapshot) searches OpenStreetMap straight from the visitor's browser, measures the routes on the terrain in the data worker and keeps them in that browser, with the same code the local crawler uses (`shared/routes.js`). bergfex tours and GPX uploads stay in the local app, since bergfex's content is not ours to republish.
 
 ```bash
 npm run deploy
@@ -58,10 +58,11 @@ The view glides on briefly after a drag, never goes below the ground, and moves 
 
 | Path | What |
 | --- | --- |
-| `shared/` | Code for both sides: tile maths and profiles, the DEM builder and TIFF reader, Sentinel-2 scenes, imagery sources, regions |
+| `shared/` | Code for both sides: tile maths and profiles, the DEM builder and TIFF reader, Sentinel-2 scenes, imagery sources, regions, OSM routes with naming, merging and Bike & Hike |
 | `server/index.js` | HTTP server: static files and the API |
 | `server/dem.js`, `imagery.js`, `sentinel.js` | The shared tile code with disk caches: elevation (tiris WCS 5 m / 0.5 m + Terrarium, 259×259 Float32 per tile), orthophotos and overlays, Sentinel-2 with the snow fraction in alpha |
 | `server/crawler/` | Regions, OSM and bergfex sources, Bike & Hike combinations, polite fetching, crawl jobs |
+| `src/crawl.js` | The public site's route search: OpenStreetMap from the browser, kept in Cache Storage |
 | `src/backend.js` | The local server's API, or on a static host the data worker and the route snapshots |
 | `src/worker.js` | Data worker for the static site: elevation tiles, orthophoto patching, Sentinel-2 snow, profiles |
 | `scripts/build.js` | Builds `public/` for the local server and `dist/` for Cloudflare Pages |
@@ -71,7 +72,7 @@ The view glides on briefly after a drag, never goes below the ground, and moves 
 | `src/routes.js` | Routes painted into each tile's overlay canvas so they lie exactly on the ground |
 | `src/ui.js` | Side panel, layers, crawler control, profile chart |
 
-Regions with hand-made extents: Zillertal, Stubaital, Ötztal, Pitztal, Kaunertal, Sellrain, Wipptal, Karwendel, Kitzbüheler Alpen, Paznaun, Arlberg, Osttirol. Anything else is geocoded with Nominatim and widened to about 25 km.
+Regions with hand-made extents: Zillertal, Stubaital, Ötztal, Pitztal, Kaunertal, Sellrain, Wipptal, Karwendel, Rofan, Kitzbüheler Alpen, Paznaun, Arlberg, Osttirol. Anything else is geocoded with Nominatim and widened to about 25 km.
 
 ## Data and licences
 

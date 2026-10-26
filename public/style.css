@@ -34,8 +34,7 @@ select option { background: #1d2228; }
 #region-form input { flex: 1; }
 #crawl-log { margin: 6px 0 0; padding-left: 18px; max-height: 120px; overflow: auto; font-size: 11px; color: var(--muted); }
 #crawl-status { margin-top: 6px; }
-.static-site #crawl-box .row, .static-site #crawl-more, .static-site #crawl-log { display: none !important; }
-.static-site #crawl-status { margin-top: 0; }
+.static-site .local-only, body:not(.static-site) .static-only { display: none; }
 #browse { display: flex; flex-direction: column; min-height: 0; flex: 1; border-bottom: none !important; }
 .seg { display: flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .seg button { flex: 1; border: none; border-radius: 0; background: none; padding: 6px 4px; }
