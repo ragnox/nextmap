@@ -574,6 +574,11 @@ export function createUI(app) {
   const start = parseState(location.search);
   quiet++;
   applySettings(start);
-  goRegion(start.region || 'Zillertal', false, { camera: start.camera, route: start.route }).finally(() => { quiet--; syncUrl(); });
+  goRegion(start.region || 'Zillertal', false, { camera: start.camera, route: start.route }).finally(() => {
+    quiet--; syncUrl();
+    // the place list for the search box, fetched while nobody waits for it
+    const later = (f) => (window.requestIdleCallback ? requestIdleCallback(f, { timeout: 3000 }) : setTimeout(f, 3000));
+    later(() => backend.places().catch(() => {}));
+  });
   return { frame: frameUpdate, busy: () => false, syncUrl };
 }
