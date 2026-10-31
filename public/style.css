@@ -98,6 +98,9 @@ select option { background: #1d2228; }
 #help .keys { display: grid; grid-template-columns: auto 1fr; gap: 7px 16px; font-size: 13px; align-items: baseline; }
 #help .keys b { font-weight: 600; white-space: nowrap; }
 #help .keys span { color: rgba(242, 241, 236, 0.8); }
+#help .card { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#help h3.privacy { margin: 16px 0 6px; font-size: 14px; }
+#help p.privacy { margin: 0; color: rgba(242, 241, 236, 0.8); line-height: 1.5; }
 kbd { display: inline-block; min-width: 18px; padding: 0 5px; margin: 0 1px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 4px;
   font: 11px/17px ui-monospace, Menlo, monospace; text-align: center; }
 
@@ -133,7 +136,6 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; margin: 0 1px; bor
   #layers { display: none; width: 230px; top: calc(58px + env(safe-area-inset-top)); right: 8px; padding: 10px; max-height: calc(100dvh - var(--sheet-h, 72px) - 80px); overflow-y: auto; }
   #layers.open { display: block; }
   #nav { bottom: calc(var(--sheet-h, 72px) + 28px); right: 8px; transition: bottom 0.22s ease; }
-  #nav #help-btn { display: none; }
   #side[data-sheet="full"] ~ #nav { display: none; }
   #help .keys { grid-template-columns: 1fr; gap: 2px; }
   #help .keys span { margin-bottom: 6px; }
