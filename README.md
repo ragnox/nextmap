@@ -2,8 +2,8 @@
 
 A FATMAP-style 3D map of Tyrol, on the same engine as the Stummerberg walkthrough (three.js 0.170, bundled with esbuild).
 
-- **Terrain** from the Land Tirol laser scan (tiris DGM): 0.5 m from zoom 14 on, 5 m below that, streamed tile by tile from the tiris WCS. Outside Tyrol (South Tyrol, Salzburg) and at small scales it falls back to the AWS Terrain Tiles. The earth's curvature is applied, so the horizon drops as it should.
-- **Imagery**: orthophotos from basemap.at or Land Tirol (20 cm), patched with EOX Sentinel-2 cloudless where they have no coverage, plus **current Sentinel-2 scenes** for summer and winter, picked per region (whole region covered, fewest clouds, preferred month: March for winter, August for summer) and rendered through Microsoft Planetary Computer.
+- **Terrain** from the Land Tirol laser scan (tiris DGM): 0.5 m from zoom 14 on, 5 m below that (0.5 m east of the Ziller too, where tiris no longer offers the 5 m model), streamed tile by tile from the tiris WCS. Outside Tyrol (South Tyrol, Salzburg) and at small scales it falls back to the AWS Terrain Tiles. The earth's curvature is applied, so the horizon drops as it should.
+- **Imagery**: orthophotos from basemap.at or Land Tirol (20 cm), patched where they have no coverage (with nextmap's own Sentinel-2 summer mosaic on the public site, EOX Sentinel-2 cloudless in the local app), plus **Sentinel-2** for summer and winter: on the public site nextmap's own seasonal mosaics of Tyrol, elsewhere and in the local app a current scene picked per region (whole region covered, fewest clouds, preferred month: March for winter, August for summer), rendered through Microsoft Planetary Computer.
 - **Winter** lays the Sentinel-2 snow cover (NDSI, so it also finds snow in shadow) onto the high-resolution orthophoto; walls too steep to hold snow stay bare. Choose “Sentinel-2 · current season” to see the raw satellite scene instead.
 - **Overlays**: slope angle in the usual avalanche classes (30/35/40/45°), contour lines, and from Land Tirol: mountain trails, wildlife and forest protection zones, lifts.
 - **Hybrid** (the Satellite/Hybrid switch): roads, forest and farm tracks, trails, lifts and railways from OpenStreetMap vector tiles (OpenFreeMap), drawn onto the terrain, with place and peak names as labels that stay upright, give way to each other and hide behind ridges.
@@ -33,13 +33,23 @@ On a phone the route list is a bottom sheet (tap its header to expand it) and th
 
 ## Public site (Cloudflare Pages)
 
-**https://nextmap.pages.dev** is the static build: no server behind it. Visitors' browsers fetch the tiris DGM, the orthophotos and Sentinel-2 directly (all of them allow it) and build the tiles in a web worker with the same code the local server uses (`shared/`), keeping elevation tiles in the browser for the next visit. Routes come from snapshots of the OpenStreetMap crawls in `dist/data/routes/` (with the Bike & Hike tours made only of OSM routes). For any other region, “Search the web for routes” (or simply opening a region without a snapshot) searches OpenStreetMap straight from the visitor's browser, measures the routes on the terrain in the data worker and keeps them in that browser, with the same code the local crawler uses (`shared/routes.js`). bergfex tours and GPX uploads stay in the local app, since bergfex's content is not ours to republish.
+**https://nextmap.pages.dev** is the static build, with one small Cloudflare Pages Function and an R2 bucket for its own data, so that visitors do not all ask the same public services:
+
+- **Routes**: the *Tyrol atlas*, all OpenStreetMap routes in Tyrol and about 8 km around it, measured, named and combined into Bike & Hike tours like a region crawl, published as JSON chunks (zoom 10, by where a route starts) in `dist/data/atlas/`. A region loads the chunks it covers. Only outside the atlas does “Search the web for routes” (or opening a region with nothing in it) search OpenStreetMap from the visitor's browser, measure the routes in the data worker and keep them in that browser.
+- **Search**: a place list of towns, villages, valleys, mountain ranges, peaks, huts and lakes (`dist/data/places.json`), searched as you type; Nominatim only for names not in it.
+- **Elevation and tiris maps**: `functions/up/` fetches tiris WCS coverages and map exports once and keeps them in R2 (and at the edge); the browser builds the tiles in a web worker with the same code the local server uses (`shared/`) and keeps them for the next visit. If the function fails, the worker asks tiris directly.
+- **Sentinel-2**: nextmap's own summer and winter mosaics (zoom 8–13 over the atlas area, each pixel from the least cloudy scene of the season) from `scripts/s2-mosaic.js`, in R2. The summer mosaic also fills the orthophoto where it has no data, in place of EOX's cloudless map (non-commercial licence). Regions outside use a current scene from the Planetary Computer as before.
+
+bergfex tours and GPX uploads stay in the local app, since bergfex's content is not ours to republish.
 
 ```bash
-npm run deploy
+node server/crawler/atlas.js                  # the Tyrol atlas: cache/atlas/ (an hour or more; Overpass is busy)
+node scripts/s2-mosaic.js render summer       # and winter: cache/s2mosaic/<name>/
+npm run deploy                                # dist/ and functions/ to Cloudflare Pages
+node --env-file=.env scripts/s2-mosaic.js upload summer-2026 https://nextmap.pages.dev
 ```
 
-builds `dist/` (`npm run build:static`) from the current `cache/routes/` and uploads it with `wrangler pages deploy` to the `nextmap` project on the Cloudflare account wrangler is logged in to (`npx wrangler login`; it needs only Pages write access). Code files carry a hash in their name, so a visitor never mixes old and new files.
+`npm run deploy` builds `dist/` (`npm run build:static`) from `cache/atlas/` (or, without it, the region crawls in `cache/routes/`) and uploads it with `wrangler pages deploy` to the `nextmap` project on the Cloudflare account wrangler is logged in to (`npx wrangler login`). `wrangler.toml` binds the R2 bucket `nextmap-data` as `TILES`; the mosaic upload needs the Pages secret `UPLOAD_KEY` and the same value in `.env`. Code files carry a hash in their name, so a visitor never mixes old and new files.
 
 ## Controls
 
@@ -64,9 +74,12 @@ The view glides on briefly after a drag, never goes below the ground, and moves 
 | `shared/` | Code for both sides: tile maths and profiles, the DEM builder and TIFF reader, Sentinel-2 scenes, imagery sources, regions, OSM routes with naming, merging and Bike & Hike |
 | `server/index.js` | HTTP server: static files and the API |
 | `server/dem.js`, `imagery.js`, `sentinel.js` | The shared tile code with disk caches: elevation (tiris WCS 5 m / 0.5 m + Terrarium, 259×259 Float32 per tile), orthophotos and overlays, Sentinel-2 with the snow fraction in alpha |
-| `server/crawler/` | Regions, OSM and bergfex sources, Bike & Hike combinations, polite fetching, crawl jobs |
+| `server/crawler/` | Regions, OSM and bergfex sources, Bike & Hike combinations, polite fetching, crawl jobs, and the Tyrol atlas (`atlas.js`) |
+| `functions/up/` | The public site's Pages Function: tiris through R2, and the Sentinel-2 mosaics |
+| `scripts/s2-mosaic.js` | Renders and uploads the summer and winter Sentinel-2 mosaics |
 | `src/crawl.js` | The public site's route search: OpenStreetMap from the browser, kept in Cache Storage |
-| `src/backend.js` | The local server's API, or on a static host the data worker and the route snapshots |
+| `src/backend.js` | The local server's API, or on a static host the data worker, the atlas chunks, the place list and the mosaics |
+| `shared/places.js` | The place list: packing, search as you type, a place as a region |
 | `src/worker.js` | Data worker for the static site: elevation tiles, orthophoto patching, Sentinel-2 snow, profiles |
 | `scripts/build.js` | Builds `public/` for the local server and `dist/` for Cloudflare Pages |
 | `src/hybrid.js`, `src/labels.js` | Hybrid layer from OpenStreetMap vector tiles, and the place and peak labels |
@@ -77,8 +90,8 @@ The view glides on briefly after a drag, never goes below the ground, and moves 
 | `src/routes.js` | Routes painted into each tile's overlay canvas so they lie exactly on the ground |
 | `src/ui.js` | Side panel, layers, crawler control, profile chart |
 
-Regions with hand-made extents: Zillertal, Stubaital, Ötztal, Pitztal, Kaunertal, Sellrain, Wipptal, Karwendel, Rofan, Kitzbüheler Alpen, Paznaun, Arlberg, Osttirol. Anything else is geocoded with Nominatim and widened to about 25 km.
+Regions with hand-made extents: Zillertal, Stubaital, Ötztal, Pitztal, Kaunertal, Sellrain, Wipptal, Karwendel, Rofan, Kitzbüheler Alpen, Paznaun, Arlberg, Osttirol. A place from the place list becomes a region of its own extent (a valley, a range) or about 20 km around it; anything else is geocoded with Nominatim and widened to about 25 km.
 
 ## Data and licences
 
-Land Tirol (tiris) terrain, orthophotos and overlays, CC BY 4.0 · basemap.at, CC BY 4.0 · Copernicus Sentinel-2 data (modified) via Microsoft Planetary Computer · EOX Sentinel-2 cloudless 2023 (CC BY-NC-SA 4.0, non-commercial) · Mapzen/AWS Terrain Tiles · OpenFreeMap, © OpenMapTiles · © OpenStreetMap contributors, ODbL · bergfex.at tours and tracks stay bergfex's: for your own use, linked back to their pages.
+Land Tirol (tiris) terrain, orthophotos and overlays, CC BY 4.0 · basemap.at, CC BY 4.0 · contains modified Copernicus Sentinel data 2026, via Microsoft Planetary Computer · EOX Sentinel-2 cloudless 2023 (CC BY-NC-SA 4.0, non-commercial; local app only) · Mapzen/AWS Terrain Tiles · OpenFreeMap, © OpenMapTiles · © OpenStreetMap contributors, ODbL · bergfex.at tours and tracks stay bergfex's: for your own use, linked back to their pages.

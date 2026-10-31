@@ -4,15 +4,25 @@
 // hybrid layer and reads the names for labels from OpenStreetMap vector tiles (hybrid.js).
 import { buildDemTile, decodeTerrarium, terrariumUrl, sampleTile } from '../shared/dem.js';
 import { limiter, once, tileSize, HALF } from '../shared/geo.js';
-import { basemapUrl, tirisOrthoUrl, eoxUrl, eoxFallback, needsPatch, patchWhite, overlayIds, overlayUrl } from '../shared/imagery.js';
+import { basemapUrl, tirisOrthoUrl, eoxUrl, eoxFallback, ancestorTile, needsPatch, patchWhite, overlayIds, overlayUrl } from '../shared/imagery.js';
 import { visualUrl, ndsiUrl, composeSnow } from '../shared/sentinel.js';
 import { hybridTile, labelsTile } from './hybrid.js';
 
 const wcs = limiter(6), web = limiter(12);
 const dedupe = once();
-const DEM_CACHE = 'nextmap-dem-v1';
+const DEM_CACHE = 'nextmap-dem-v2';                    // v1 has eastern Tyrol at zoom 11-13 without tiris
+
+// on the public site the Land Tirol's data comes through nextmap's own cache (functions/up/), and straight from the
+// Land where that is missing (a plain static server) or fails
+const PROXY = globalThis.NEXTMAP_PROXY ? new URL('up/', self.location).href : null;
+const viaProxy = (url) => (PROXY && url.startsWith('https://gis.tirol.gv.at/arcgis/')
+  ? url.replace('https://gis.tirol.gv.at/arcgis/services/Service_Public/terrain/MapServer/WCSServer', `${PROXY}wcs`)
+    .replace('https://gis.tirol.gv.at/arcgis/rest/services/Service_Public/', `${PROXY}tiris/`)
+  : null);
 
 async function get(url, limit = web) {
+  const own = viaProxy(url);
+  if (own) { const r = await limit(() => fetch(own)).catch(() => null); if (r?.status === 200) return r; }
   const res = await limit(() => fetch(url));
   return res.status === 200 ? res : null;
 }
@@ -44,7 +54,7 @@ const io = {
 };
 
 let demCache = null;
-const openCache = () => (demCache ||= (self.caches ? caches.open(DEM_CACHE).catch(() => null) : Promise.resolve(null)));
+const openCache = () => (demCache ||= (self.caches ? caches.delete('nextmap-dem-v1').catch(() => {}).then(() => caches.open(DEM_CACHE)).catch(() => null) : Promise.resolve(null)));
 async function dem(z, x, y) {
   const key = `https://nextmap.invalid/dem/${z}/${x}/${y}`;
   return dedupe(key, async () => {
@@ -85,16 +95,30 @@ async function bitmapOf(url) {
   const r = await get(url);
   return r ? createImageBitmap(await r.blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }) : null;
 }
+// where the orthophoto has no data: nextmap's own Sentinel-2 summer mosaic on the public site (data/s2.json says
+// which), else EOX Sentinel-2 cloudless
+const mosaic = PROXY ? fetch(new URL('data/s2.json', self.location)).then((r) => r.json()).then((d) => d.summer || null).catch(() => null) : Promise.resolve(null);
+// the tiles to try: the mosaic at its own detail, then its wide-area levels (the far views), or EOX
+async function fallbacks(z, x, y) {
+  const m = await mosaic;
+  if (!m || z < m.minZoom) return [eoxFallback(z, x, y)];
+  const at = (maxZ) => ancestorTile((zz, xx, yy) => `${PROXY}s2/${m.name}/${zz}/${xx}/${yy}.jpg`, maxZ, z, x, y);
+  return z > m.wideMaxZoom ? [at(m.maxZoom), at(m.wideMaxZoom)] : [at(m.maxZoom)];
+}
+
 async function imagery(layer, z, x, y, extra) {
   if (layer === 'eox') return bitmapOf(eoxUrl(z, x, y));
   if (layer === 'over') { const ids = overlayIds(extra); return ids.length ? bitmapOf(overlayUrl(ids, z, x, y)) : null; }
   const src = await get(layer === 'tiris' ? tirisOrthoUrl(z, x, y) : basemapUrl(z, x, y), layer === 'tiris' ? wcs : web);
-  if (!src || !(src.headers.get('content-type') || '').startsWith('image')) return z <= 16 ? bitmapOf(eoxUrl(z, x, y)) : null;
-  const blob = await src.blob(), px = await pixels(blob);
-  if (!needsPatch(px)) return createImageBitmap(blob);
-  // outside the orthophoto's coverage: EOX Sentinel-2 cloudless in the white area
-  const fb = eoxFallback(z, x, y), fr = await get(fb.url);
-  if (fr) patchWhite(px, await pixels(await fr.blob()), fb);
+  const ok = src && (src.headers.get('content-type') || '').startsWith('image');
+  const blob = ok && await src.blob(), px = blob ? await pixels(blob) : new Uint8ClampedArray(256 * 256 * 4).fill(255);
+  if (blob && !needsPatch(px)) return createImageBitmap(blob);
+  // outside the orthophoto's coverage: the fallback in the white area (all of it where there was no photo)
+  let fb, fr;
+  for (fb of await fallbacks(z, x, y)) if ((fr = await get(fb.url))) break;
+  if (!fr) return blob ? createImageBitmap(blob) : null;
+  if (!blob && fb.k === 1) return createImageBitmap(await fr.blob());
+  patchWhite(px, await pixels(await fr.blob()), fb);
   return createImageBitmap(new ImageData(px, 256, 256));
 }
 

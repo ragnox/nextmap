@@ -23,9 +23,10 @@
     <div id="sheet-handle" role="button" tabindex="0" aria-label="Show or hide the route list"><span class="grip"></span><span id="sheet-summary"></span></div>
     <div class="brand"><span class="logo">▲</span> nextmap <small>Tirol 3D</small></div>
     <form id="region-form" autocomplete="off">
-      <input id="region" list="region-list" value="Zillertal" placeholder="Region, valley or place" aria-label="Region">
-      <datalist id="region-list"></datalist>
+      <input id="region" value="Zillertal" placeholder="Region, valley, place or peak" aria-label="Region, valley, place or peak"
+        role="combobox" aria-autocomplete="list" aria-controls="region-suggest" aria-expanded="false" enterkeyhint="go" spellcheck="false">
       <button type="submit" title="Go to region">Go</button>
+      <ul id="region-suggest" role="listbox" aria-label="Suggestions" hidden></ul>
     </form>
   </header>
 
@@ -149,14 +150,14 @@
       <b>Touch</b><span>One finger moves; two fingers pinch to zoom, twist to turn, slide up or down together to tilt</span>
     </div>
     <h3 class="privacy">Privacy</h3>
-    <p class="small privacy">The public site counts visits with Cloudflare Web Analytics: no cookies, nothing stored on your device, no personal data and no tracking across other sites. Your map view and routes stay in your browser. The terrain, imagery and route data load straight from their providers (Land Tirol, basemap.at, Microsoft Planetary Computer, EOX, AWS, OpenFreeMap, OpenStreetMap), which see your IP address as any website you visit does.</p>
+    <p class="small privacy">The public site counts visits with Cloudflare Web Analytics: no cookies, nothing stored on your device, no personal data and no tracking across other sites. Your map view and routes stay in your browser. Routes, place names, the Land Tirol elevation and nextmap's Sentinel-2 mosaics come from this site; the rest loads straight from its providers (basemap.at, AWS, OpenFreeMap, and Microsoft Planetary Computer or OpenStreetMap when you look outside Tyrol), which see your IP address as any website you visit does.</p>
   </div>
 </div>
 
 <div id="status">
   <span id="cursor"></span>
   <span id="loading"></span>
-  <span class="attr">Terrain &amp; orthophoto: Land Tirol (tiris, CC BY 4.0) · basemap.at · Copernicus Sentinel-2 via Planetary Computer · EOX s2cloudless · Mapzen Terrain Tiles · OpenFreeMap © OpenMapTiles · © OpenStreetMap contributors · bergfex.at</span>
+  <span class="attr">Terrain &amp; orthophoto: Land Tirol (tiris, CC BY 4.0) · basemap.at · contains modified Copernicus Sentinel data 2026, via Planetary Computer<span class="local-only"> · EOX s2cloudless</span> · Mapzen Terrain Tiles · OpenFreeMap © OpenMapTiles · © OpenStreetMap contributors<span class="local-only"> · bergfex.at</span></span>
 </div>
 
 <div id="tooltip" hidden></div>

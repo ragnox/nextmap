@@ -6,3 +6,4 @@ public/app.js.map
 dist/
 public/worker.js
 public/worker.js.map
+.wrangler/

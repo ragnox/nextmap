@@ -6,7 +6,7 @@ import { ROOT } from './util.js';
 import { demTileGz, MAX_Z } from './dem.js';
 import { imageryTile } from './imagery.js';
 import { scene, s2Tile, S2_MAX_Z } from './sentinel.js';
-import { PRESETS, resolveRegion } from './crawler/regions.js';
+import { PRESETS, resolveRegion, placeRows } from './crawler/regions.js';
 import { SOURCES, startCrawl, jobStatus, loadRoutes, trackFor, attachGpx, trackStatus, backfillTracks, remeasure, needsRemeasure } from './crawler/index.js';
 import { RateLimited } from './crawler/polite.js';
 import { profile } from './geo.js';
@@ -50,18 +50,21 @@ const routes = [
     const s = await scene(m[1], region.bbox);
     json(res, { ...s, maxZoom: S2_MAX_Z });
   }],
-  ['GET', /^\/api\/s2tile\/([0-9a-f]+)\/(\d+)\/(\d+)\/(\d+)$/, async (req, res, m) => {
+  ['GET', /^\/api\/s2tile\/([\w.-]+)\/(\d+)\/(\d+)\/(\d+)$/, async (req, res, m) => {
     const [z, x, y] = tileArgs(m.slice(1));
     if (z > S2_MAX_Z) return json(res, { error: 'zoom too high' }, 400);
     send(res, 200, await s2Tile(m[1], z, x, y), 'image/png', { 'Cache-Control': 'public, max-age=604800' });
   }],
   ['GET', /^\/api\/regions$/, async (req, res) => json(res, PRESETS.map(({ name, bbox, view }) => ({ name, bbox, view })))],
+  ['GET', /^\/api\/places$/, async (req, res) => json(res, await placeRows())],
   ['GET', /^\/api\/region$/, async (req, res, m, q) => {
-    const r = await resolveRegion(q.get('q'));
+    const near = (q.get('near') || '').split(',').map(Number);
+    const r = await resolveRegion(q.get('q'), near.length === 2 && near.every(Number.isFinite) ? near : null);
     r ? json(res, r) : json(res, { error: 'not found' }, 404);
   }],
   ['GET', /^\/api\/routes$/, async (req, res, m, q) => {
-    const region = await resolveRegion(q.get('region') || 'Zillertal');
+    const near = (q.get('near') || '').split(',').map(Number);
+    const region = await resolveRegion(q.get('region') || 'Zillertal', near.length === 2 && near.every(Number.isFinite) ? near : null);
     if (!region) return json(res, { error: 'region not found' }, 404);
     const data = (await loadRoutes(region.slug)) || { region: region.name, slug: region.slug, bbox: region.bbox, view: region.view, sources: {}, routes: [] };
     const tracks = trackStatus(data);

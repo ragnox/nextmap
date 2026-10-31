@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { KIND_COLORS, routeBounds } from './routes.js';
 import { haversine } from './geo.js';
 import { parseState, stateQuery, LAYERS } from './urlstate.js';
+import { fold, searchPlaces, regionFromPlace, PLACE_LABEL } from '../shared/places.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,15 +27,61 @@ export function createUI(app) {
   let markerPos = null;
 
   // ------------------------------------------------------------ regions
-  backend.regions().then((list) => {
-    $('region-list').innerHTML = list.map((r) => `<option value="${esc(r.name)}">`).join('');
+  // the search box suggests the preset regions and, as you type, places from the place list (towns, valleys,
+  // ranges, peaks, huts, lakes); Enter takes the first suggestion, and anything else goes to the geocoder
+  let presets = [];
+  backend.regions().then((list) => { presets = list.map((r) => ({ ...r, preset: true })); });
+  const box = $('region'), sug = $('region-suggest');
+  let hits = [], cur = -1, typed = 0;
+  function showSuggestions(list) {
+    hits = list; cur = -1;
+    sug.hidden = !list.length;
+    box.setAttribute('aria-expanded', String(!!list.length));
+    box.removeAttribute('aria-activedescendant');
+    sug.innerHTML = list.map((p, i) => `<li role="option" id="sug-${i}" data-i="${i}"><span>${esc(p.name)}</span><span class="muted">${p.preset ? 'Region' : PLACE_LABEL[p.type]}${p.ele ? ` · ${p.ele.toLocaleString('de-AT')} m` : ''}${p.near && p.near !== p.name ? ` · ${esc(p.near)}` : ''}</span></li>`).join('');
+  }
+  function highlight(i) {
+    cur = i;
+    sug.querySelectorAll('li').forEach((li, k) => li.classList.toggle('on', k === i));
+    box.setAttribute('aria-activedescendant', `sug-${i}`);
+    sug.children[i]?.scrollIntoView({ block: 'nearest' });
+  }
+  async function suggest() {
+    const n = ++typed, k = fold(box.value);
+    // the box still shows the current region: offer all presets, like a menu
+    if (!k || box.value === state.region?.name) return showSuggestions(presets);
+    const own = presets.filter((r) => fold(r.name).includes(k));
+    const found = k.length >= 2 ? searchPlaces(await backend.places().catch(() => []), box.value, 8) : [];
+    if (n === typed) showSuggestions([...own, ...found.filter((p) => !own.some((r) => fold(r.name) === p.key))].slice(0, 9));
+  }
+  function choose(p) {
+    showSuggestions([]);
+    box.blur();
+    goRegion(p.name, true, { region: p.preset ? null : regionFromPlace(p) }).then(() => syncUrl(true));
+  }
+  box.addEventListener('input', suggest);
+  box.addEventListener('focus', () => { box.select(); suggest(); if (phone()) setSheet('full'); });
+  box.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== box) showSuggestions([]); }, 150));
+  box.addEventListener('keydown', (e) => {
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && hits.length) {
+      e.preventDefault();
+      highlight(e.key === 'ArrowDown' ? (cur + 1) % hits.length : cur <= 0 ? hits.length - 1 : cur - 1);
+    } else if (e.key === 'Escape') showSuggestions([]);
   });
-  $('region-form').addEventListener('submit', (e) => { e.preventDefault(); goRegion($('region').value, true).then(() => syncUrl(true)); });
+  sug.addEventListener('pointerdown', (e) => e.preventDefault());        // keep the focus in the box
+  sug.addEventListener('click', (e) => { const li = e.target.closest('li[data-i]'); if (li) choose(hits[li.dataset.i]); });
+  $('region-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (hits.length && (cur >= 0 || box.value !== state.region?.name)) return choose(hits[Math.max(cur, 0)]);
+    showSuggestions([]); box.blur();
+    goRegion(box.value, true).then(() => syncUrl(true));
+  });
 
-  // camera and route: from a link, or Back/Forward
-  async function goRegion(q, fly, { camera, route } = {}) {
+  // camera and route: from a link, or Back/Forward; region: a place chosen in the search box
+  async function goRegion(q, fly, { camera, route, region: chosen } = {}) {
     try {
-      const region = await backend.region(q || 'Zillertal');
+      // a name used by several places (there are many a Kreuzjoch) means the one where the camera is
+      const region = chosen || await backend.region(q || 'Zillertal', camera ? [camera.lon, camera.lat] : null);
       state.region = region;
       $('region').value = region.name;
       app.setRegion(region, { fly: fly && !camera });
@@ -334,8 +381,11 @@ export function createUI(app) {
     const s = await state.s2[key];
     if (terrain.settings.season !== season) return;
     if (s.error || s.none) { $('s2-info').textContent = `No Sentinel-2 scene: ${s.error || 'none in ' + s.window?.join(' – ')}`; delete state.s2[key]; return; }
-    terrain.setS2Scene(season, s.searchid);
-    $('s2-info').textContent = `Sentinel-2 ${new Date(s.date).toLocaleDateString('de-AT', { day: 'numeric', month: 'short', year: 'numeric' })} · ${Math.round(s.cloud)}% cloud${season === 'winter' && !st.satellite ? ' · snow on the orthophoto' : ''}`;
+    terrain.setS2Scene(season, s.searchid, s.maxZoom);
+    const day = (d, o) => new Date(d).toLocaleDateString('de-AT', o);
+    $('s2-info').textContent = (s.mosaic
+      ? `Sentinel-2 ${season} mosaic, ${day(s.window[0], { day: 'numeric', month: 'short' })} – ${day(s.window[1], { day: 'numeric', month: 'short', year: 'numeric' })}, least clouds first`
+      : `Sentinel-2 ${day(s.date, { day: 'numeric', month: 'short', year: 'numeric' })} · ${Math.round(s.cloud)}% cloud`) + (season === 'winter' && !st.satellite ? ' · snow on the orthophoto' : '');
     invalidate();
   }
   function setSeason(season) {

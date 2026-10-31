@@ -30,8 +30,14 @@ select option { background: #1d2228; }
 .brand { font-weight: 700; font-size: 17px; letter-spacing: 0.02em; margin-bottom: 8px; }
 .brand .logo { color: var(--accent); }
 .brand small { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 4px; }
-#region-form { display: flex; gap: 8px; }
+#region-form { display: flex; gap: 8px; position: relative; }
 #region-form input { flex: 1; }
+#region-suggest { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 10; margin: 0; padding: 4px; list-style: none;
+  max-height: min(420px, 50vh); overflow: auto; background: rgba(20, 23, 28, 0.97); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+#region-suggest li { display: flex; justify-content: space-between; gap: 10px; padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+#region-suggest li .muted { font-size: 11.5px; white-space: nowrap; }
+#region-suggest li:hover, #region-suggest li.on { background: rgba(255, 210, 63, 0.14); }
 #crawl-log { margin: 6px 0 0; padding-left: 18px; max-height: 120px; overflow: auto; font-size: 11px; color: var(--muted); }
 #crawl-status { margin-top: 6px; }
 .static-site .local-only, body:not(.static-site) .static-only { display: none; }

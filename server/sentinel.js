@@ -10,12 +10,12 @@ const pcLimit = limiter(6);
 const dedupe = once();
 const postJSON = (url, body) => fetchJSON(url, { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
 
-// scene per season and region, refreshed daily
+// scene per season and region, refreshed twice a day (the tiler's mosaic ids expire after a day)
 export async function scene(season, bbox) {
   const key = `s2/scene-${season}-${bbox.map((v) => v.toFixed(2)).join('_')}.json`;
   return dedupe(key, async () => {
     const old = await readJSON(key);
-    if (old && Date.now() - old.checked < 86400e3) return old;
+    if (old && Date.now() - old.checked < 43200e3) return old;
     try {
       const s = { ...(await findScene(postJSON, season, bbox)), checked: Date.now() };
       if (s.none && old) return old;
@@ -40,6 +40,6 @@ async function renderTile(sid, z, x, y) {
 }
 
 export function s2Tile(sid, z, x, y) {
-  if (!/^[0-9a-f]{16,64}$/.test(sid)) throw new Error('bad scene id');
+  if (!/^[\w.-]{16,80}$/.test(sid)) throw new Error('bad scene id');
   return cached(`s2/tiles/v2/${sid}/${z}/${x}/${y}.png`, 0, () => renderTile(sid, z, x, y));
 }

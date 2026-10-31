@@ -12,10 +12,11 @@ export const S = N + 3;
 export const MAX_Z = 17;
 
 const WCS = 'https://gis.tirol.gv.at/arcgis/services/Service_Public/terrain/MapServer/WCSServer';
-// tiris publishes the DGM in two Gauss-Krüger zones; lon/lat envelopes from DescribeCoverage
+// tiris publishes the DGM in two Gauss-Krüger zones; lon/lat envelopes from DescribeCoverage. The 5 m model of
+// the eastern zone was withdrawn in 2026; its 50 cm model has overviews and answers as quickly for large tiles.
 const ZONES = {
   M28: { lon: [10.08, 11.797], lat: [46.75, 47.615], c5: 'Gelaendemodell_5m_M28', c05: 'Gelaendemodell_50cm_M28' },
-  M31: { lon: [11.733, 12.975], lat: [46.63, 47.758], c5: 'Gelaendemodell_5m_M31', c05: 'Gelaendemodell_50cm_M31' },
+  M31: { lon: [11.733, 12.975], lat: [46.63, 47.758], c5: 'Gelaendemodell_50cm_M31', c05: 'Gelaendemodell_50cm_M31' },
 };
 const TYROL = [10.08, 46.63, 12.975, 47.758];
 
@@ -75,7 +76,7 @@ async function fillFromWcs(grid, z, x, y, coverage, fetchBuffer) {
   const latT = yToLat(y1 + 1.5 * cell), latB = yToLat(y1 - (N + 1.5) * cell);
   const buf = await fetchBuffer(wcsUrl(coverage, lon0, latB, lon1, latT, S, S));
   const g = buf && parseTiff(buf);
-  if (!g) return;
+  if (!g) throw new Error(`no GeoTIFF from ${coverage}`);
   // columns line up with the grid (Mercator x is linear in longitude); rows are re-sampled from latitude
   for (let j = 0; j < S; j++) {
     const lat = yToLat(y1 - (j - 1) * cell);

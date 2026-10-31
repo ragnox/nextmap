@@ -82,6 +82,7 @@ export class Terrain {
       tiris: [], hybrid: false, relief: 0.55, hazeColor: new THREE.Color(0xc5d3e0), hazeDensity: 1 / 200000, sunDir: new THREE.Vector3(0.3, 0.8, 0.5).normalize(),
     };
     this.s2Scenes = {};                     // season -> scene id
+    this.s2MaxZ = {};                       // season -> the scene's deepest zoom level
     this.routeLayer = null;
     this.onChange = null;
     this.buildRoots();
@@ -102,9 +103,9 @@ export class Terrain {
     Object.assign(s, patch);
     if (patch.imagery && patch.imagery !== before.imagery) this.forEachTile((t) => { if (t.state === 2) { t.imgTex?.dispose(); t.imgTex = null; t.imgPending = false; } });
   }
-  setS2Scene(season, sceneId) {
+  setS2Scene(season, sceneId, maxZoom = S2_MAX_Z) {
     if (this.s2Scenes[season] === sceneId) return;
-    this.s2Scenes[season] = sceneId;
+    this.s2Scenes[season] = sceneId; this.s2MaxZ[season] = maxZoom;
     this.forEachTile((t) => { t.s2[season]?.tex?.dispose(); delete t.s2[season]; });
   }
   forEachTile(fn) {
@@ -151,7 +152,7 @@ export class Terrain {
       if (!src) return;
       draw.push({ node: t, src, dist });
       if (needS2) {
-        const s2t = t.ancestorAt(S2_MAX_Z);
+        const s2t = t.ancestorAt(this.s2MaxZ[season]);
         if (!s2t.s2[season]) want(s2Wanted, s2t, dist);
       }
       if (tirisKey && t.z >= TIRIS_MIN_Z && (!t.tiris || t.tiris.key !== tirisKey)) want(tirisWanted, t, dist);
@@ -332,7 +333,7 @@ export class Terrain {
       u.uImg.value = img ? img.imgTex : gray; if (img) xfTo(t, img, u.uImgXf.value);
       u.uHasS2.value = 0;
       if (needS2) {
-        let s = t.ancestorAt(S2_MAX_Z);
+        let s = t.ancestorAt(this.s2MaxZ[season]);
         while (s && !(s.s2[season]?.state === 2 && s.s2[season].tex)) s = s.parent;
         if (s) { u.uS2.value = s.s2[season].tex; xfTo(t, s, u.uS2Xf.value); u.uHasS2.value = 1; }
       }

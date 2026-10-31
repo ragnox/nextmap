@@ -85,14 +85,15 @@ export async function findScene(postJSON, season, bbox) {
     ] },
     sortby: [{ field: 'eo:cloud_cover', direction: 'asc' }],
   });
-  // the same query always gets the same id, so cached tiles stay valid
-  return { season, bbox, window, date: best.date, cloud: best.cloud, cover: best.cover, searchid: reg.searchid, candidates: scored.slice(0, 6) };
+  // the tiler now answers with an id that expires after a day (it used to be a lasting `searchid`)
+  return { season, bbox, window, date: best.date, cloud: best.cloud, cover: best.cover, searchid: reg.searchid || reg.id, candidates: scored.slice(0, 6) };
 }
 
-// bilinear, so the 20 m short-wave band does not show as blocks in the snow edge
-const tileUrl = (sid, z, x, y, q) => `${PC}/data/v1/mosaic/${sid}/tiles/WebMercatorQuad/${z}/${x}/${y}@1x.png?collection=sentinel-2-l2a&nodata=0&resampling=bilinear&${q}`;
-export const visualUrl = (sid, z, x, y) => tileUrl(sid, z, x, y, 'assets=visual&asset_bidx=visual%7C1%2C2%2C3');
-export const ndsiUrl = (sid, z, x, y) => tileUrl(sid, z, x, y, 'assets=B03&assets=B11&asset_as_band=true&expression=(B03-B11)/(B03%2BB11)&rescale=-1,1');
+// true colour by nearest neighbour (bilinear blends the black no-data border of a granule into a dark seam), the snow
+// index bilinear, so the 20 m short-wave band does not show as blocks in the snow edge
+const tileUrl = (sid, z, x, y, q) => `${PC}/data/v1/mosaic/${sid}/tiles/WebMercatorQuad/${z}/${x}/${y}@1x.png?collection=sentinel-2-l2a&nodata=0&${q}`;
+export const visualUrl = (sid, z, x, y) => tileUrl(sid, z, x, y, 'resampling=nearest&assets=visual&asset_bidx=visual%7C1%2C2%2C3');
+export const ndsiUrl = (sid, z, x, y) => tileUrl(sid, z, x, y, 'resampling=bilinear&assets=B03&assets=B11&asset_as_band=true&expression=(B03-B11)/(B03%2BB11)&rescale=-1,1');
 
 // true colour (RGBA) + NDSI (grey in red, RGBA) -> RGB with the snow fraction in alpha
 export function composeSnow(vis, nd) {

@@ -23,11 +23,12 @@ export function overlayIds(names) {
 }
 export const overlayUrl = (ids, z, x, y) => tirisExport('ogd_sport', ids.join(','), z, x, y, 'png32');
 
-// EOX has no tiles beyond 16: the ancestor at 16 and where this tile sits in it
-export function eoxFallback(z, x, y) {
-  const k = z > 16 ? 2 ** (z - 16) : 1;
-  return { url: eoxUrl(Math.min(z, 16), Math.floor(x / k), Math.floor(y / k)), k, ox: ((x % k) * 256) / k, oy: ((y % k) * 256) / k };
+// for a source with no tiles beyond maxZ: the ancestor at maxZ and where this tile sits in it
+export function ancestorTile(urlOf, maxZ, z, x, y) {
+  const k = z > maxZ ? 2 ** (z - maxZ) : 1;
+  return { url: urlOf(Math.min(z, maxZ), Math.floor(x / k), Math.floor(y / k)), k, ox: ((x % k) * 256) / k, oy: ((y % k) * 256) / k };
 }
+export const eoxFallback = (z, x, y) => ancestorTile(eoxUrl, 16, z, x, y);
 
 const isWhite = (d, o) => d[o] >= 250 && d[o + 1] >= 250 && d[o + 2] >= 250;
 // does this orthophoto tile (RGBA) have a "no coverage" white area worth patching?
