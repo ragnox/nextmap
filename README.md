@@ -49,7 +49,7 @@ npm run deploy                                # dist/ and functions/ to Cloudfla
 node --env-file=.env scripts/s2-mosaic.js upload summer-2026 https://nextmap.pages.dev
 ```
 
-`npm run deploy` builds `dist/` (`npm run build:static`) from `cache/atlas/` (or, without it, the region crawls in `cache/routes/`) and uploads it with `wrangler pages deploy` to the `nextmap` project on the Cloudflare account wrangler is logged in to (`npx wrangler login`). `wrangler.toml` binds the R2 bucket `nextmap-data` as `TILES`; the mosaic upload needs the Pages secret `UPLOAD_KEY` and the same value in `.env`. Code files carry a hash in their name, so a visitor never mixes old and new files.
+`npm run deploy` builds `dist/` (`npm run build:static`) from `cache/atlas/` (or, without it, the region crawls in `cache/routes/`) and uploads it with `wrangler pages deploy` to the `nextmap` project on the Cloudflare account wrangler is logged in to (`npx wrangler login`). `wrangler.toml` binds the R2 bucket `nextmap-data` as `TILES`; the mosaic upload sends `UPLOAD_KEY` from `.env`, and the site checks it against its SHA-256 in `wrangler.toml`. Code files carry a hash in their name, so a visitor never mixes old and new files.
 
 ## Controls
 

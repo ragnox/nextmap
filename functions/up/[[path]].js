@@ -2,7 +2,7 @@
 //   up/wcs?…                    the Land Tirol elevation (tiris WCS GetCoverage), fetched once and kept in R2
 //   up/tiris/<service>/MapServer/export?…   tiris map exports (orthophoto, overlays), the same
 //   up/s2/<mosaic>/<z>/<x>/<y>.png|jpg      nextmap's own Sentinel-2 mosaics, put there by scripts/s2-mosaic.js
-//                                            (PUT with the UPLOAD_KEY secret)
+//                                            (PUT with the UPLOAD_KEY from .env; the site knows only its SHA-256)
 // Visitors' browsers then do not all ask the Land's servers for the same tiles. Only these few upstream requests
 // are allowed, so this is no open proxy.
 const TIRIS = 'https://gis.tirol.gv.at/arcgis';
@@ -58,10 +58,10 @@ export async function onRequestGet({ request, env, params, waitUntil }) {
   return res;
 }
 
-// mosaic tiles from scripts/s2-mosaic.js
+// mosaic tiles from scripts/s2-mosaic.js, sent with the key whose SHA-256 is UPLOAD_KEY_SHA256 (wrangler.toml)
 export async function onRequestPut({ request, env, params }) {
-  const path = [].concat(params.path || []).join('/');
-  if (!env.UPLOAD_KEY || request.headers.get('X-Upload-Key') !== env.UPLOAD_KEY) return new Response('no', { status: 403 });
+  const path = [].concat(params.path || []).join('/'), key = request.headers.get('X-Upload-Key');
+  if (!env.UPLOAD_KEY_SHA256 || !key || (await sha(key)) !== env.UPLOAD_KEY_SHA256) return new Response('no', { status: 403 });
   if (!S2.test(path) || !env.TILES) return new Response('not here', { status: 400 });
   await env.TILES.put(path, await request.arrayBuffer(), { httpMetadata: { contentType: path.endsWith('.png') ? 'image/png' : 'image/jpeg' } });
   return new Response('ok');

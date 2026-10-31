@@ -1,5 +1,5 @@
 # Cloudflare Pages: the static site in dist/ (npm run deploy) and functions/up/, which keeps the site's own data in
-# the R2 bucket below. The function's UPLOAD_KEY is a Pages secret (npx wrangler pages secret put UPLOAD_KEY).
+# the R2 bucket below.
 name = "nextmap"
 pages_build_output_dir = "dist"
 compatibility_date = "2026-10-01"
@@ -7,3 +7,7 @@ compatibility_date = "2026-10-01"
 [[r2_buckets]]
 binding = "TILES"
 bucket_name = "nextmap-data"
+
+[vars]
+# SHA-256 of UPLOAD_KEY in .env, the key scripts/s2-mosaic.js sends with the mosaic tiles (a new key: put its hash here)
+UPLOAD_KEY_SHA256 = "883e092a1d9fb8b3abfb0a53267562252945d2187bd1b4baaf5e02b24ffff25b"
