@@ -17,6 +17,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const at = (...p) => path.join(ROOT, ...p);
 const common = { bundle: true, format: 'esm', target: 'es2022', logLevel: 'warning' };
 const arg = process.argv[2];
+const CF_BEACON = 'f19449d62d184f05b822eeb5d27f4c2f';
 
 if (arg !== '--static') {
   const opts = { ...common, entryPoints: { app: at('src/main.js'), worker: at('src/worker.js') }, outdir: at('public'), sourcemap: true, minify: arg !== '--watch' };
@@ -36,7 +37,10 @@ if (arg !== '--static') {
   const html = fs.readFileSync(at('public/index.html'), 'utf8')
     .replace('href="style.css"', `href="${css}"`)
     .replace('src="app.js"', `src="${app}"`)
-    .replace('<meta charset="utf-8">', '<meta charset="utf-8">\n<meta name="nextmap-mode" content="static">');
+    .replace('<meta charset="utf-8">', '<meta charset="utf-8">\n<meta name="nextmap-mode" content="static">')
+    // Cloudflare Web Analytics for the public site (see the privacy note). Pages' own injection of this script left
+    // out some deployments, so the build adds it.
+    .replace('</body>', `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "${CF_BEACON}"}'></script>\n</body>`);
   fs.writeFileSync(path.join(DIST, 'index.html'), html);
   // the home-screen app: manifest and icons
   fs.copyFileSync(at('public/manifest.webmanifest'), path.join(DIST, 'manifest.webmanifest'));
