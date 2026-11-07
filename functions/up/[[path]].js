@@ -1,10 +1,13 @@
 // The public site's own data, as a Cloudflare Pages Function in front of the R2 bucket (binding TILES):
-//   up/wcs?…                    the Land Tirol elevation (tiris WCS GetCoverage), fetched once and kept in R2
+//   up/wcs?…                    the Land Tirol elevation (tiris WCS GetCoverage), from R2 where already kept, else
+//                               fetched and kept at the edge
 //   up/tiris/<service>/MapServer/export?…   tiris map exports (orthophoto, overlays), the same
 //   up/s2/<mosaic>/<z>/<x>/<y>.png|jpg      nextmap's own Sentinel-2 mosaics, put there by scripts/s2-mosaic.js
 //                                            (PUT with the UPLOAD_KEY from .env; the site knows only its SHA-256)
 // Visitors' browsers then do not all ask the Land's servers for the same tiles. Only these few upstream requests
 // are allowed, so this is no open proxy.
+// Cost guard: visitors never write to R2 (tiris answers stay in the free edge cache only), so storage and writes
+// stay where the uploads put them, and reads (at most one per Function request, 100k a day) stay in the free tier.
 const TIRIS = 'https://gis.tirol.gv.at/arcgis';
 const UA = 'nextmap/0.1 (3D map of Tyrol; +https://nextmap.pages.dev)';
 const KEEP = 'public, max-age=2592000';                      // 30 days in browsers and at the edge
@@ -50,7 +53,6 @@ export async function onRequestGet({ request, env, params, waitUntil }) {
       // the ArcGIS server reports errors as XML or JSON with status 200: only images and coverages are kept
       if (!up.ok || !/tiff|^image\//.test(type)) return new Response(up.body, { status: up.ok ? 502 : up.status, headers: { 'Content-Type': type } });
       const buf = await up.arrayBuffer();
-      if (env.TILES) waitUntil(env.TILES.put(key, buf, { httpMetadata: { contentType: type }, customMetadata: { url: target } }));
       res = answer(buf, type, 'upstream');
     }
   }
