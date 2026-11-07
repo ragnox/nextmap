@@ -59,8 +59,11 @@ uniform float uHasHybrid;
 uniform sampler2D uRoutes;   // routes drawn for this tile (transparent)
 uniform vec4 uRoutesXf;
 uniform float uHasRoutes;
+uniform sampler2D uPlan;     // the route being planned (transparent)
+uniform vec4 uPlanXf;
+uniform float uHasPlan;
 
-uniform int uSeason;         // 0 summer, 1 winter
+uniform int uSeason;        // 0 summer, 1 winter
 uniform int uImagery;        // 0 orthophoto, 1 Sentinel-2 of the season
 uniform float uSlope;        // slope-angle overlay opacity
 uniform float uContours;     // contour line opacity
@@ -163,6 +166,10 @@ void main() {
   if (uHasRoutes > 0.5) {
     vec4 r = texture2D(uRoutes, xf(uRoutesXf));
     col = mix(col, r.rgb, r.a);
+  }
+  if (uHasPlan > 0.5) {
+    vec4 pl = texture2D(uPlan, xf(uPlanXf));
+    col = mix(col, pl.rgb, pl.a);
   }
   if (uTileTint > 0.0) col = mix(col, fract(vec3(uDemXf.z * 7.1, uDemXf.z * 3.3, uDemXf.z * 11.7)), 0.25 * uTileTint);
 

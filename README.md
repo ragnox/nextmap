@@ -15,6 +15,7 @@ A FATMAP-style 3D map of Tyrol, on the same engine as the Stummerberg walkthroug
   - **Bike & Hike**, which no source lists, is combined from the others: a bike route (at most 45 km and 1800 m) whose highest point meets a hiking route that goes on to a summit or hut 200–1400 m higher within 8 km. The ride is drawn solid, the walk dashed, with one profile for both.
   - Robots.txt is honoured (for `nextmap` or `*`), with at least 1.5 s between requests to a site; a “too many requests” answer or a used-up quota header pauses that part of the site until the time it gives; every page is cached so re-crawls stay quiet.
   - Every route with a track is measured on the tiris DGM (length, ascent, descent, high and low point); selecting one draws its elevation profile from the 0.5 m DGM and offers a GPX download.
+- **Plan your own route** (“＋ Plan a route”): click the map to set waypoints; each leg runs freehand, straight over the ground or as drawn with the pen. Drag a point to move it, drag or click the line to add one, click a point to remove it, undo and redo. Length, climb, high and low point, the time (DIN 33466 for hiking, Munter for ski tours, a climb-rate model for MTB and eMTB) and the elevation profile follow every change; steep stretches are coloured by gradient in summer and by the angle of the slope crossed in winter (the avalanche classes). Plans are kept in the browser under My routes, travel whole in the link (`plan=` holds the points, about a metre apart at most), and go out and in as GPX; any route of the atlas can be opened as an editable copy. Following the path network comes next.
 
 ## Run
 
@@ -65,6 +66,8 @@ Like Google Earth and Google Maps:
 | Arrows / WASD | Move · Q E or Shift + ←/→ turn · R F or Shift + ↑/↓ tilt · + − zoom · N north up · ? help |
 | Touch | One finger moves; two fingers pinch, twist to turn, slide up or down together to tilt |
 
+While planning a route, a click adds a point instead of picking a route; **P** takes the pen (drag to draw, the map stays put), ⌘Z / ⇧⌘Z undo and redo, ⌫ removes the last point.
+
 The view glides on briefly after a drag, never goes below the ground, and moves closer instead of through a slope when you turn near one. The buttons at the bottom right zoom, switch between looking straight down and the tilted view, turn north up, and show the controls. Click a route on the map or in the list to see its details; hover the profile to find a point on the map.
 
 ## Layout
@@ -88,7 +91,10 @@ The view glides on briefly after a drag, never goes below the ground, and moves 
 | `src/terrain.js` | Quadtree level of detail; leaves draw with the nearest loaded ancestor's data |
 | `src/shaders.js` | Terrain shaders: DEM in the vertex shader, imagery, snow, slope, contours, overlays |
 | `src/routes.js` | Routes painted into each tile's overlay canvas so they lie exactly on the ground |
-| `src/ui.js` | Side panel, layers, crawler control, profile chart |
+| `shared/plan.js` | A planned route: waypoints and legs, editing, the link format, walking and riding times, steepness classes |
+| `src/planner.js`, `src/planlayer.js` | The route planner: clicks, dragging, the pen, the panel, My routes; the plan's own overlay canvas per tile |
+| `src/profile.js`, `src/gpx.js`, `src/format.js` | Profile chart, GPX in and out, figures as the panels show them |
+| `src/ui.js` | Side panel, layers, crawler control |
 
 Regions with hand-made extents: Zillertal, Stubaital, Ötztal, Pitztal, Kaunertal, Sellrain, Wipptal, Karwendel, Rofan, Kitzbüheler Alpen, Paznaun, Arlberg, Osttirol. A place from the place list becomes a region of its own extent (a valley, a range) or about 20 km around it; anything else is geocoded with Nominatim and widened to about 25 km.
 

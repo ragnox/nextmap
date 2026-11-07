@@ -81,11 +81,19 @@ export function climb(d, e, win = 100, thr = 5) {
 
 // elevation profile of a multi-line: distance (m) and elevation (m) per sample, plus totals.
 // `sample(points)` returns the elevations of Mercator points (null where unknown).
-export async function buildProfile(lines, sample, { step = 15, maxPts = 4000 } = {}) {
+// With `slope`, also the angle of the ground at each sample (degrees), from the elevations 10 m east and north of it.
+export async function buildProfile(lines, sample, { step = 15, maxPts = 4000, slope = false } = {}) {
   const total = lines.reduce((s, l) => s + lineLength(l), 0);
   step = Math.max(step, total / maxPts);
   const parts = lines.map((l) => densify(l, step));
-  const h = await sample(parts.flat().map(([lon, lat]) => [lonToX(lon), latToY(lat)]));
+  const flat = parts.flat(), pts = flat.map(([lon, lat]) => [lonToX(lon), latToY(lat)]);
+  const k = flat.map(([, lat]) => 10 / Math.cos(lat * RAD));            // 10 m on the ground in Mercator metres
+  const all = await sample(slope ? [...pts, ...pts.map(([x, y], i) => [x + k[i], y]), ...pts.map(([x, y], i) => [x, y + k[i]])] : pts);
+  const h = all.slice(0, pts.length), n = pts.length;
+  const slopes = slope ? h.map((v, i) => {
+    const ex = all[n + i], ny = all[2 * n + i];
+    return v == null || ex == null || ny == null ? null : Math.round(Math.atan(Math.hypot(ex - v, ny - v) / 10) * 1800 / Math.PI) / 10;
+  }) : null;
   const d = [], e = [], coords = [];
   let dist = 0, i = 0, up = 0, down = 0;
   for (const part of parts) {
@@ -101,7 +109,7 @@ export async function buildProfile(lines, sample, { step = 15, maxPts = 4000 } =
   const valid = e.filter((v) => v != null);
   return {
     length: Math.round(total), ascent: Math.round(up), descent: Math.round(down),
-    min: Math.round(Math.min(...valid)), max: Math.round(Math.max(...valid)), d, e, coords,
+    min: Math.round(Math.min(...valid)), max: Math.round(Math.max(...valid)), d, e, coords, ...(slopes && { slope: slopes }),
   };
 }
 

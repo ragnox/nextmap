@@ -96,7 +96,7 @@ const routes = [
     const b = await readBody(req);
     const lines = (b.lines || []).filter((l) => Array.isArray(l) && l.length > 1).slice(0, 200);
     if (!lines.length) return json(res, { error: 'no line' }, 400);
-    json(res, await profile(lines, { z: 14, step: 10, maxPts: 3000 }));
+    json(res, await profile(lines, { z: 14, step: 10, maxPts: 3000, slope: !!b.slope }));
   }],
 ];
 

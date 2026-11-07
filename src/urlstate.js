@@ -2,6 +2,7 @@
 //   ?region=Zillertal&camera=47.16300,11.86400,2350,200,-42&season=winter&imagery=tiris&style=hybrid
 //    &layers=slope,contours,bergwege&kind=skitour&route=osm-r123&sun=60
 // camera is where the camera stands: latitude, longitude, altitude (m), heading and pitch (degrees).
+// A route being planned comes as plan=<points> (shared/plan.js) and pname=<its name>.
 // Defaults (summer, basemap.at, satellite, routes on, all kinds, sun 45) are left out.
 export const LAYERS = ['slope', 'contours', 'bergwege', 'wildschutz', 'lifte'];
 
@@ -21,6 +22,8 @@ export function parseState(search) {
     kind: q.get('kind') || 'all',
     route: q.get('route') || null,
     sun: num(q.get('sun')) ?? 45,
+    plan: q.get('plan') || null,
+    pname: q.get('pname') || null,
   };
 }
 
@@ -39,6 +42,7 @@ export function stateQuery(st) {
   if (st.kind && st.kind !== 'all') q.set('kind', st.kind);
   if (st.route) q.set('route', st.route);
   if (st.sun != null && Math.round(st.sun) !== 45) q.set('sun', Math.round(st.sun));
+  if (st.plan) { q.set('plan', st.plan); if (st.pname) q.set('pname', st.pname); }
   // keep commas readable
   return q.toString().replace(/%2C/g, ',');
 }

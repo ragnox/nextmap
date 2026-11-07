@@ -7,7 +7,7 @@ import { EARTH_R } from './geo.js';
 
 const N = 256, S = N + 3, SEG = 64;
 const ROOT_Z = 8, MAX_Z = 17, S2_MAX_Z = 14, TIRIS_MIN_Z = 12, ROUTES_MIN_Z = 9, HYBRID_MIN_Z = 10;
-const MAX_LOADS = 8, MAX_TILES = 260, ROUTE_DRAWS_PER_FRAME = 8;
+const MAX_LOADS = 8, MAX_TILES = 260, ROUTE_DRAWS_PER_FRAME = 8, PLAN_DRAWS_PER_FRAME = 24;
 
 // ---------------------------------------------------------------- shared grid with skirts
 function gridGeometry() {
@@ -49,6 +49,7 @@ class Tile {
     this.tiris = null;                      // { key, state, tex }
     this.hybrid = null;                     // { state, tex }: roads, tracks and trails
     this.routes = null;                     // { version, tex, canvas }
+    this.plan = null;                       // the same for the route being planned
   }
   get key() { return `${this.z}/${this.x}/${this.y}`; }
   readyAncestor() { let t = this; while (t && t.state !== 2) t = t.parent; return t; }
@@ -60,6 +61,7 @@ class Tile {
     this.tiris?.tex?.dispose(); this.tiris = null;
     this.hybrid?.tex?.dispose(); this.hybrid = null;
     this.routes?.tex?.dispose(); this.routes = null;
+    this.plan?.tex?.dispose(); this.plan = null;
     this.dem = null; this.state = 0;
   }
 }
@@ -83,7 +85,7 @@ export class Terrain {
     };
     this.s2Scenes = {};                     // season -> scene id
     this.s2MaxZ = {};                       // season -> the scene's deepest zoom level
-    this.routeLayer = null;
+    this.routeLayer = null; this.planLayer = null;
     this.onChange = null;
     this.buildRoots();
   }
@@ -301,6 +303,7 @@ export class Terrain {
       uTiris: { value: blank }, uTirisXf: { value: new THREE.Vector4() }, uHasTiris: { value: 0 },
       uHybrid: { value: blank }, uHybridXf: { value: new THREE.Vector4() }, uHasHybrid: { value: 0 },
       uRoutes: { value: blank }, uRoutesXf: { value: new THREE.Vector4() }, uHasRoutes: { value: 0 },
+      uPlan: { value: blank }, uPlanXf: { value: new THREE.Vector4() }, uHasPlan: { value: 0 },
       uSeason: { value: 0 }, uImagery: { value: 0 }, uSlope: { value: 0 }, uContours: { value: 0 }, uContourStep: { value: 20 },
       uSunDir: { value: new THREE.Vector3() }, uRelief: { value: 0.5 }, uHazeColor: { value: new THREE.Color() }, uHazeDensity: { value: 0 },
       uTileTint: { value: 0 },
@@ -312,7 +315,7 @@ export class Terrain {
     draw.sort((a, b) => a.dist - b.dist);
     this.lastDraw = draw;
     const st = this.settings, season = st.season;
-    let routeBudget = ROUTE_DRAWS_PER_FRAME;
+    let routeBudget = ROUTE_DRAWS_PER_FRAME, planBudget = PLAN_DRAWS_PER_FRAME;
     this.pendingRoutes = false;
     while (this.pool.length < draw.length) {
       const m = new THREE.Mesh(this.geo, this.material());
@@ -352,11 +355,22 @@ export class Terrain {
       u.uHasRoutes.value = 0;
       if (this.routeLayer?.visible && t.z >= ROUTES_MIN_Z) {
         if (!t.routes || t.routes.version !== this.routeLayer.version) {
-          if (routeBudget > 0) { routeBudget--; this.drawRoutes(t); } else this.pendingRoutes = true;
+          if (routeBudget > 0) { routeBudget--; this.drawOverlay(t, 'routes', this.routeLayer); } else this.pendingRoutes = true;
         }
         let s = t;
         while (s && !(s.routes && s.routes.version === this.routeLayer.version)) s = s.parent;
         if (s && s.routes.tex) { u.uRoutes.value = s.routes.tex; xfTo(t, s, u.uRoutesXf.value); u.uHasRoutes.value = 1; }
+      }
+      u.uHasPlan.value = 0;
+      const plan = this.planLayer;
+      if (plan && !plan.empty && t.z >= ROUTES_MIN_Z) {
+        if (!t.plan || t.plan.version !== plan.version) {
+          if (planBudget > 0) { planBudget--; this.drawOverlay(t, 'plan', plan); } else this.pendingRoutes = true;
+        }
+        // until it is redrawn, a tile shows the plan as it was rather than nothing
+        let s = t;
+        while (s && !(s.plan && (s.plan.version === plan.version || s === t))) s = s.parent;
+        if (s && s.plan.tex) { u.uPlan.value = s.plan.tex; xfTo(t, s, u.uPlanXf.value); u.uHasPlan.value = 1; }
       }
       u.uSeason.value = season === 'winter' ? 1 : 0;
       u.uImagery.value = st.satellite ? 1 : 0;
@@ -366,23 +380,25 @@ export class Terrain {
     });
   }
 
-  drawRoutes(t) {
-    if (!t.routes) {
-      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
-      t.routes = { canvas, tex: null, version: -1 };
-    }
-    const ctx = t.routes.canvas.getContext('2d');
+  // a tile's overlay canvas for the routes (key 'routes') or the planned route ('plan'); a layer that does not reach
+  // the tile gets no canvas there
+  drawOverlay(t, key, layer) {
+    const o = t[key] || (t[key] = { canvas: null, tex: null, version: -1 });
+    o.version = layer.version;
+    if (layer.touches && !layer.touches(t.z, t.x, t.y)) { o.tex?.dispose(); o.tex = null; return; }
+    if (!o.canvas) { o.canvas = document.createElement('canvas'); o.canvas.width = o.canvas.height = 512; }
+    const ctx = o.canvas.getContext('2d');
     ctx.clearRect(0, 0, 512, 512);
-    const any = this.routeLayer.draw(ctx, t.z, t.x, t.y, 512);
-    t.routes.version = this.routeLayer.version;
-    if (!any) { t.routes.tex?.dispose(); t.routes.tex = null; return; }
-    if (!t.routes.tex) t.routes.tex = this.texture(t.routes.canvas);
-    else t.routes.tex.needsUpdate = true;
+    if (!layer.draw(ctx, t.z, t.x, t.y, 512)) { o.tex?.dispose(); o.tex = null; return; }
+    if (!o.tex) o.tex = this.texture(o.canvas);
+    else o.tex.needsUpdate = true;
   }
+  // forget an overlay everywhere (the planner closed)
+  dropOverlay(key) { this.forEachTile((t) => { t[key]?.tex?.dispose(); t[key] = null; }); this.onChange?.(); }
 
   evict() {
     const loaded = [];
-    this.forEachTile((t) => { if (t.state === 2 || t.routes || Object.keys(t.s2).length || t.tiris || t.hybrid) loaded.push(t); });
+    this.forEachTile((t) => { if (t.state === 2 || t.routes || t.plan || Object.keys(t.s2).length || t.tiris || t.hybrid) loaded.push(t); });
     if (loaded.length <= MAX_TILES) return;
     loaded.sort((a, b) => a.used - b.used || b.z - a.z);
     for (const t of loaded.slice(0, loaded.length - MAX_TILES)) {

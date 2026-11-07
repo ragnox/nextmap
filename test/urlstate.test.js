@@ -22,3 +22,13 @@ test('defaults stay out of the link, nonsense falls back to them', () => {
   assert.equal(st.camera, null); assert.equal(st.season, 'summer'); assert.equal(st.imagery, 'ortho');
   assert.deepEqual(st.layers, ['slope']); assert.equal(st.sun, 45);
 });
+
+test('a planned route rides along in the link, with its name', () => {
+  const q = stateQuery({ region: 'Zillertal', plan: '1.0.mmuoCom1_IlrB.AC', pname: 'Über den Grat' });
+  assert.match(q, /plan=1\.0\.mmuoCom1_IlrB\.AC/);
+  const back = parseState(`?${q}`);
+  assert.equal(back.plan, '1.0.mmuoCom1_IlrB.AC');
+  assert.equal(back.pname, 'Über den Grat');
+  assert.equal(parseState('?region=Zillertal').plan, null);
+  assert.doesNotMatch(stateQuery({ region: 'Zillertal', pname: 'no plan' }), /pname/);
+});

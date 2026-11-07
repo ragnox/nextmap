@@ -4,14 +4,15 @@ import { KIND_COLORS, routeBounds } from './routes.js';
 import { haversine } from './geo.js';
 import { parseState, stateQuery, LAYERS } from './urlstate.js';
 import { fold, searchPlaces, regionFromPlace, PLACE_LABEL } from '../shared/places.js';
+import { createPlanner, savedPlans, ACTIVITY_LABEL } from './planner.js';
+import { drawProfile as paintProfile, profileIndex } from './profile.js';
+import { gpxText, gpxPoints, fileName, saveFile } from './gpx.js';
+import { km, hm, statsHtml } from './format.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const KIND_LABEL = { hike: 'Hiking', bikehike: 'Bike & Hike', mtb: 'Mountain bike', emtb: 'eMTB', skitour: 'Ski touring', freeride: 'Freeride', snowshoe: 'Snowshoe' };
 const SOURCE_LABEL = { osm: 'OpenStreetMap', bergfex: 'bergfex', combined: 'combined' };
-const km = (m) => (m == null ? '–' : m >= 10000 ? `${(m / 1000).toFixed(0)} km` : `${(m / 1000).toFixed(1)} km`);
-const hm = (m) => (m == null ? '–' : `${Math.round(m).toLocaleString('de-AT')} m`);
-const hours = (h) => (h == null ? null : `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} h`);
 const DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const clock = (t) => new Date(t).toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' });
 
@@ -25,6 +26,49 @@ export function createUI(app) {
   Object.assign(marker.style, { position: 'fixed', width: '14px', height: '14px', margin: '-7px 0 0 -7px', borderRadius: '50%', background: '#ffd23f', border: '2px solid #141414', pointerEvents: 'none', zIndex: 6, display: 'none' });
   document.body.appendChild(marker);
   let markerPos = null;
+
+  // ------------------------------------------------------------ planning a route (src/planner.js)
+  const planner = createPlanner(app, {
+    onOpen: () => {
+      if (state.selected) select(null);
+      $('browse').hidden = true; $('crawl-box').hidden = true; $('detail').hidden = true;
+      if (phone() && side.dataset.sheet === 'peek') setSheet('half');
+    },
+    onClose: () => { $('browse').hidden = false; $('crawl-box').hidden = false; renderMine(); sheetSummary(); },
+    link: () => `${location.origin}${location.pathname}?${stateQuery(collectState())}`,
+    syncUrl: (push) => syncUrl(push),
+    fit: (b) => app.flyToBounds(b),
+    setMarker: (at, ele) => {
+      if (!at) { markerPos = null; marker.style.display = 'none'; invalidate(); return; }
+      const [wx, wz] = frame.fromLonLat(at[0], at[1]);
+      markerPos = new THREE.Vector3(wx, ele ?? terrain.heightAt(wx, wz) ?? 0, wz);
+      invalidate();
+    },
+    savedChanged: () => renderMine(),
+    summary: () => sheetSummary(),
+    status: (t) => { $('crawl-status').textContent = t; },
+  });
+  $('plan-new').addEventListener('click', () => planner.open(planner.blank()));
+  $('plan-import-gpx').addEventListener('click', () => planner.pickFile());
+  // My routes: the plans kept in this browser
+  function renderMine() {
+    const list = savedPlans();
+    $('mine').hidden = !list.length;
+    $('mine-count').textContent = list.length;
+    $('mine-list').innerHTML = list.map((p) => `<li data-id="${esc(p.id)}"><span class="dot" style="background:${KIND_COLORS[p.activity] || '#999'}"></span><span class="name">${esc(p.name)}</span><span class="meta">${esc([ACTIVITY_LABEL[p.activity], km(p.length), p.ascent != null ? `↑ ${hm(p.ascent)}` : null, new Date(p.saved).toLocaleDateString('de-AT')].filter(Boolean).join(' · '))}</span></li>`).join('');
+  }
+  $('mine-toggle').addEventListener('click', () => {
+    const open = $('mine-list').hidden;
+    $('mine-list').hidden = !open; $('mine-toggle').setAttribute('aria-expanded', String(open));
+  });
+  $('mine-list').addEventListener('click', (e) => { const li = e.target.closest('li[data-id]'); if (li) planner.openSaved(li.dataset.id); });
+  $('mine-list').hidden = false; $('mine-toggle').setAttribute('aria-expanded', 'true');
+  renderMine();
+  // a route from a link: the one kept under My routes if it is the same
+  function openPlanFromLink(st) {
+    try { planner.open(planner.fromCode(st.plan, st.pname), { fit: !st.camera, id: savedPlans().find((p) => p.code === st.plan)?.id }); }
+    catch { $('crawl-status').textContent = 'The route in this link could not be read.'; }
+  }
 
   // ------------------------------------------------------------ regions
   // the search box suggests the preset regions and, as you type, places from the place list (towns, valleys,
@@ -187,6 +231,7 @@ export function createUI(app) {
 
   // ------------------------------------------------------------ details
   async function select(r, { fly = true } = {}) {
+    if (r && planner.active()) planner.close({ url: false });
     state.selected = r; state.profile = null;
     routes.select(r); invalidate();
     syncUrl(true);
@@ -244,7 +289,7 @@ export function createUI(app) {
     const text = await file.text();
     // make sure the file belongs to this route: bergfex names its files after the tour, and a track should pass its start
     const inName = file.name.match(/bergfextour_(\d+)/), own = r.id.match(/^bergfex-(\d+)$/);
-    const pts = [...text.matchAll(/<(?:trkpt|rtept)\b[^>]*>/g)].map(([t]) => [Number(t.match(/lon="([-\d.]+)"/)?.[1]), Number(t.match(/lat="([-\d.]+)"/)?.[1])]).filter(([a, b]) => a && b);
+    const pts = gpxPoints(text);
     if (!pts.length) { $('d-profile-note').textContent = `${file.name} has no track points.`; return; }
     const closest = r.start ? Math.min(...pts.map((p) => haversine(p, r.start))) : 0;
     const doubt = inName && own && inName[1] !== own[1] ? `${file.name} is bergfex tour ${inName[1]}, not this one.`
@@ -260,13 +305,19 @@ export function createUI(app) {
   const gpxInput = Object.assign(document.createElement('input'), { type: 'file', accept: '.gpx,application/gpx+xml', hidden: true });
   gpxInput.addEventListener('change', () => { attachFile(gpxInput.files[0]); gpxInput.value = ''; });
   document.body.appendChild(gpxInput);
-  $('side').addEventListener('dragover', (e) => { if (local && state.selected && e.dataTransfer.types.includes('Files')) { e.preventDefault(); $('detail').classList.add('drop'); } });
+  // a GPX file dropped on the panel: the selected route's track (local app), or else a route to look at and change
+  const attaching = () => local && state.selected && !planner.active();
+  $('side').addEventListener('dragover', (e) => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    if (attaching()) $('detail').classList.add('drop');
+  });
   $('side').addEventListener('dragleave', () => $('detail').classList.remove('drop'));
   $('side').addEventListener('drop', (e) => {
     $('detail').classList.remove('drop');
-    if (!state.selected || !e.dataTransfer.files.length) return;
+    if (!e.dataTransfer.files.length) return;
     e.preventDefault();
-    attachFile(e.dataTransfer.files[0]);
+    if (attaching()) attachFile(e.dataTransfer.files[0]); else planner.importFile(e.dataTransfer.files[0]);
   });
 
   function renderActions(r) {
@@ -274,19 +325,16 @@ export function createUI(app) {
     if (r.kind === 'bikehike' && Array.isArray(r.parts)) for (const p of r.parts) acts.push(`<a href="${esc(p.url)}" target="_blank" rel="noopener" title="${esc(p.name)}">${p.role === 'bike' ? 'Bike route' : 'Hiking route'} on ${SOURCE_LABEL[p.source] || 'source'} ↗</a>`);
     else acts.push(`<a href="${esc(r.url)}" target="_blank" rel="noopener">Open on ${SOURCE_LABEL[r.source] || 'source'} ↗</a>`);
     if (r.website) acts.push(`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website ↗</a>`);
-    if (r.lines) acts.push(`<button id="d-gpx">GPX</button>`);
+    if (r.lines) acts.push(`<button id="d-gpx">GPX</button>`, `<button id="d-copy" title="Open this route in the planner to change it">Edit a copy</button>`);
     const bf = r.id.match(/^bergfex-(\d+)$/);
     if (bf) acts.push(`<a href="https://www.bergfex.at/downloads/gps/?id=${bf[1]}&amp;fileType=gpx" target="_blank" rel="noopener">GPX on bergfex ↗</a>`);
     if (local && (!r.lines || r.source === 'bergfex')) acts.push(`<button id="d-attach" title="Use a GPX file you downloaded as this route's track (or drop it on this panel)">Attach GPX…</button>`);
     $('d-actions').innerHTML = acts.join('');
     $('d-attach')?.addEventListener('click', () => gpxInput.click());
     $('d-zoom').onclick = () => zoomTo(r);
-    if (r.lines) $('d-gpx').onclick = () => downloadGpx(r);
+    if (r.lines) { $('d-gpx').onclick = () => downloadGpx(r); $('d-copy').onclick = () => planner.open(planner.fromRoute(r)); }
   }
-  function renderStats(s) {
-    const items = [['Length', km(s.length)], ['Ascent', hm(s.ascent)], ['Descent', hm(s.descent)], ['Highest', hm(s.max)], ['Lowest', hm(s.min)], ['Time', hours(s.duration) || '–']];
-    $('d-stats').innerHTML = items.map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join('');
-  }
+  function renderStats(s) { $('d-stats').innerHTML = statsHtml(s); }
   function zoomTo(r) {
     if (r.lines) app.flyToBounds(routeBounds(r));
     else if (r.start) app.flyTo(app.lookAt(r.start[0], r.start[1], { dist: 3500, pitch: 45, heading: headingNow() }));
@@ -295,45 +343,18 @@ export function createUI(app) {
 
   function downloadGpx(r) {
     const p = state.profile;
-    const pts = p ? [p.coords.map((c, i) => [c[0], c[1], p.e[i]])] : r.lines.map((l) => l.map((c) => [c[0], c[1], null]));
-    const seg = (l) => `<trkseg>${l.map(([lon, lat, e]) => `<trkpt lat="${lat.toFixed(6)}" lon="${lon.toFixed(6)}">${e != null ? `<ele>${e}</ele>` : ''}</trkpt>`).join('')}</trkseg>`;
-    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="nextmap" xmlns="http://www.topografix.com/GPX/1/1"><metadata><name>${esc(r.name)}</name><link href="${esc(r.url)}"/></metadata><trk><name>${esc(r.name)}</name>${pts.map(seg).join('')}</trk></gpx>`;
-    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' })), download: `${r.name.replace(/[^\w\-äöüÄÖÜß ]+/g, '').trim() || 'route'}.gpx` });
-    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    const lines = p ? [p.coords.map((c, i) => [c[0], c[1], p.e[i]])] : r.lines.map((l) => l.map((c) => [c[0], c[1], null]));
+    saveFile(fileName(r.name), gpxText(r.name, lines, r.url));
   }
 
   // elevation profile
   const pc = $('profile');
   function drawProfile(hoverI = -1) {
-    const p = state.profile; if (!p) return;
-    const ctx = pc.getContext('2d'), W = pc.width, H = pc.height, pad = { l: 44, r: 8, t: 10, b: 22 };
-    ctx.clearRect(0, 0, W, H);
-    const es = p.e.filter((v) => v != null), lo = Math.floor(Math.min(...es) / 100) * 100, hi = Math.ceil(Math.max(...es) / 100) * 100 || lo + 100;
-    const X = (d) => pad.l + (d / (p.d[p.d.length - 1] || 1)) * (W - pad.l - pad.r), Y = (e) => H - pad.b - ((e - lo) / (hi - lo)) * (H - pad.t - pad.b);
-    ctx.font = '18px system-ui'; ctx.fillStyle = 'rgba(242,241,236,0.6)'; ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1;
-    const step = (hi - lo) > 1200 ? 500 : (hi - lo) > 500 ? 200 : 100;
-    for (let e = lo; e <= hi; e += step) { ctx.beginPath(); ctx.moveTo(pad.l, Y(e)); ctx.lineTo(W - pad.r, Y(e)); ctx.stroke(); ctx.fillText(e, 2, Y(e) + 6); }
-    const total = p.d[p.d.length - 1], kstep = total > 20000 ? 5000 : total > 8000 ? 2000 : 1000;
-    for (let d = kstep; d < total; d += kstep) ctx.fillText(`${d / 1000}`, X(d) - 5, H - 3);
-    ctx.beginPath(); ctx.moveTo(X(0), H - pad.b);
-    p.d.forEach((d, i) => { if (p.e[i] != null) ctx.lineTo(X(d), Y(p.e[i])); });
-    ctx.lineTo(X(total), H - pad.b); ctx.closePath();
-    const col = KIND_COLORS[state.selected?.kind] || '#ff5a2e';
-    ctx.fillStyle = col + '55'; ctx.fill();
-    ctx.beginPath(); p.d.forEach((d, i) => { if (p.e[i] != null) ctx.lineTo(X(d), Y(p.e[i])); }); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.stroke();
-    if (hoverI >= 0) {
-      const x = X(p.d[hoverI]);
-      ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, H - pad.b); ctx.stroke();
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px system-ui';
-      const label = `${(p.d[hoverI] / 1000).toFixed(1)} km · ${Math.round(p.e[hoverI])} m`;
-      ctx.fillText(label, Math.min(x + 6, W - ctx.measureText(label).width - 4), pad.t + 18);
-    }
+    if (state.profile) paintProfile(pc, state.profile, { color: KIND_COLORS[state.selected?.kind] || '#ff5a2e', hover: hoverI });
   }
   pc.addEventListener('mousemove', (e) => {
     const p = state.profile; if (!p) return;
-    const r = pc.getBoundingClientRect(), x = ((e.clientX - r.left) / r.width) * pc.width;
-    const total = p.d[p.d.length - 1], d = ((x - 44) / (pc.width - 52)) * total;
-    let i = 0; while (i < p.d.length - 1 && p.d[i] < d) i++;
+    const i = profileIndex(pc, p, e.clientX);
     drawProfile(i);
     const [lon, lat] = p.coords[i], [wx, wz] = frame.fromLonLat(lon, lat);
     markerPos = new THREE.Vector3(wx, p.e[i] ?? terrain.heightAt(wx, wz) ?? 0, wz);
@@ -423,7 +444,8 @@ export function createUI(app) {
   function collectState() {
     return {
       region: state.region?.name, camera: app.cameraState(), season: terrain.settings.season, imagery: $('imagery').value,
-      hybrid: terrain.settings.hybrid, routes: routes.visible, kind: state.kind, route: state.selected?.id || null, sun: Number($('sun').value),
+      hybrid: terrain.settings.hybrid, routes: routes.visible, kind: state.kind, route: planner.active() ? null : state.selected?.id || null, sun: Number($('sun').value),
+      plan: planner.code(), pname: planner.name(),
       layers: LAYERS.filter((l) => (l === 'slope' ? $('l-slope').checked : l === 'contours' ? $('l-contours').checked : document.querySelector(`[data-tiris="${l}"]`)?.checked)),
     };
   }
@@ -451,6 +473,7 @@ export function createUI(app) {
         if (st.camera) app.setCamera(st.camera);
         if ((st.route || null) !== (state.selected?.id || null)) await select(state.all.find((r) => r.id === st.route) || null, { fly: !st.camera });
       }
+      if (st.plan) { if (st.plan !== planner.code()) openPlanFromLink(st); } else if (planner.active()) planner.close({ url: false });
     } finally { quiet--; }
   });
 
@@ -511,7 +534,7 @@ export function createUI(app) {
     $('fullscreen').addEventListener('click', () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(() => {}));
   }
   function sheetSummary() {
-    $('sheet-summary').textContent = state.selected ? state.selected.name
+    $('sheet-summary').textContent = planner.active() ? planner.summary() : state.selected ? state.selected.name
       : `${state.region?.name || ''} · ${(state.list || state.all).length} routes`;
   }
 
@@ -535,6 +558,7 @@ export function createUI(app) {
   canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
   canvas.addEventListener('pointerup', (e) => {
     if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5 || performance.now() - down.t > 500) return;
+    if (planner.active()) { planner.click(e.clientX, e.clientY); return; }
     const p = app.pickAt(e.clientX, e.clientY);
     if (p?.route) { select(p.route, { fly: false }); }
   });
@@ -545,19 +569,23 @@ export function createUI(app) {
     const e = pending; pending = null;
     if (!e || e.buttons) return;
     const p = app.pickAt(e.clientX, e.clientY);
+    if (planner.active()) planner.hover(p, e.clientX, e.clientY);
     if (!p) { $('cursor').textContent = ''; tip.hidden = true; return; }
     const { slope, aspect } = terrain.slopeAt(p.hit.x, p.hit.z);
     $('cursor').textContent = `${p.lat.toFixed(5)} N  ${p.lon.toFixed(5)} E  ·  ${Math.round(p.hit.y)} m  ·  ${slope.toFixed(0)}° ${DIRS[Math.round(aspect / 45) % 8]}`;
-    if (p.route !== routes.hovered) { routes.hover(p.route); invalidate(); }
-    tip.hidden = !p.route;
-    if (p.route) { tip.textContent = `${p.route.name} · ${KIND_LABEL[p.route.kind] || ''}`; tip.style.left = `${e.clientX}px`; tip.style.top = `${e.clientY}px`; }
-    canvas.style.cursor = p.route ? 'pointer' : '';
+    // while planning, a click adds a point, so routes under the cursor are not picked out
+    const over = planner.active() ? null : p.route;
+    if (over !== routes.hovered) { routes.hover(over); invalidate(); }
+    tip.hidden = !over;
+    if (over) { tip.textContent = `${over.name} · ${KIND_LABEL[over.kind] || ''}`; tip.style.left = `${e.clientX}px`; tip.style.top = `${e.clientY}px`; }
+    canvas.style.cursor = planner.active() ? planner.cursor(p) : p.route ? 'pointer' : '';
   }
   setInterval(updateCursor, 60);
 
   // ------------------------------------------------------------ per frame
   const v = new THREE.Vector3();
   function frameUpdate() {
+    planner.frame();
     $('compass').firstElementChild.style.transform = `rotate(${-headingNow()}deg)`;
     $('tilt').textContent = controls.pitch < -75 * Math.PI / 180 ? '3D' : '2D';
     const n = Object.values(terrain.active || {}).reduce((a, b) => a + b, 0);
@@ -575,10 +603,11 @@ export function createUI(app) {
   quiet++;
   applySettings(start);
   goRegion(start.region || 'Zillertal', false, { camera: start.camera, route: start.route }).finally(() => {
+    if (start.plan) openPlanFromLink(start);
     quiet--; syncUrl();
     // the place list for the search box, fetched while nobody waits for it
     const later = (f) => (window.requestIdleCallback ? requestIdleCallback(f, { timeout: 3000 }) : setTimeout(f, 3000));
     later(() => backend.places().catch(() => {}));
   });
-  return { frame: frameUpdate, busy: () => false, syncUrl };
+  return { frame: frameUpdate, busy: () => false, syncUrl, planner };
 }

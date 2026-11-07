@@ -60,7 +60,7 @@ function serverBackend() {
     places: lazy(() => getJSON('api/places').then(unpackPlaces).catch(() => [])),
     region: (name, near) => getJSON(`api/region?q=${q(name)}${nearArg(near)}`),
     routes: (region) => getJSON(`api/routes?region=${q(region.name)}${nearArg(region.view)}`),
-    profile: (lines) => post('api/profile', { lines }),
+    profile: (lines, opts = {}) => post('api/profile', { lines, ...opts }),
     s2Scene: (season, region) => getJSON(`api/s2/${season}?region=${q(region.name)}`),
     sources: () => getJSON('api/sources'),
     startCrawl: (region, sources) => post('api/crawl', { region, sources }),
@@ -130,7 +130,7 @@ function staticBackend() {
       if (mine && (!snap || mine.updated > snap.updated)) return mine;
       return snap || { region: r.name, slug: r.slug, bbox: r.bbox, view: r.view, sources: {}, routes: [] };
     },
-    profile: (lines) => buildProfile(lines, (pts) => call('sample', 14, pts), { step: 10, maxPts: 3000 }),
+    profile: (lines, opts = {}) => buildProfile(lines, (pts) => call('sample', 14, pts), { step: 10, maxPts: 3000, ...opts }),
     // nextmap's own mosaic of the season where it covers the region; else a scene per season and region, looked up
     // twice a day (the tiler's mosaic ids expire after a day)
     s2Scene: async (season, region) => {
