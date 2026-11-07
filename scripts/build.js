@@ -83,6 +83,14 @@ if (arg !== '--static') {
     if (fs.existsSync(meta)) { const m = JSON.parse(fs.readFileSync(meta, 'utf8')); if (!mosaics[m.season] || m.rendered > mosaics[m.season].rendered) mosaics[m.season] = m; }
   }
   if (Object.keys(mosaics).length) write('s2.json', mosaics);
+  // the path network for the route planner (scripts/network.js), its tiles under their version so they never change
+  const netIndex = at('cache/net/index.json');
+  const net = fs.existsSync(netIndex) ? JSON.parse(fs.readFileSync(netIndex, 'utf8')) : null;
+  if (net) {
+    fs.cpSync(at('cache/net', String(net.z)), path.join(DIST, 'net', net.version, String(net.z)), { recursive: true });
+    write('net.json', { ...net, path: `net/${net.version}` });
+    regions.push(`the path network (${net.counts.km} km in ${net.counts.tiles} tiles, ${(net.bytes / 1e6).toFixed(1)} MB)`);
+  }
   if (fs.existsSync(at('cache/atlas/places.json'))) write('places.json', packPlaces(JSON.parse(fs.readFileSync(at('cache/atlas/places.json'), 'utf8')).places));
   for (const f of !atlas && fs.existsSync(at('cache/routes')) ? fs.readdirSync(at('cache/routes')).filter((n) => n.endsWith('.json')) : []) {
     const d = JSON.parse(fs.readFileSync(at('cache/routes', f), 'utf8'));
@@ -95,7 +103,7 @@ if (arg !== '--static') {
     regions.push(`${d.region} (${routes.length})`);
   }
   fs.writeFileSync(path.join(DIST, 'data', 'LICENSE.txt'),
-    'Route data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0: https://opendatacommons.org/licenses/odbl/\n' +
+    'Route data and the path network (net/) © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0: https://opendatacommons.org/licenses/odbl/\n' +
     'Elevations measured on the Land Tirol DGM (tiris, CC BY 4.0) and the AWS Terrain Tiles.\n');
 
   // the page itself and the route data are checked on every visit; the hashed files never change
@@ -104,9 +112,10 @@ if (arg !== '--static') {
     '/', '  Cache-Control: no-cache', '/index.html', '  Cache-Control: no-cache',
     '/data/*', '  Cache-Control: public, max-age=600',
     '/manifest.webmanifest', '  Content-Type: application/manifest+json',
+    '/net/*', '  Cache-Control: public, max-age=31536000, immutable',
     ...[worker, app, css].flatMap((f) => [`/${f}`, '  Cache-Control: public, max-age=31536000, immutable']),
   ].join('\n') + '\n');
 
   const kb = (f) => Math.round(fs.statSync(path.join(DIST, f)).size / 1024);
-  console.log(`dist/: ${app} ${kb(app)} kB, ${worker} ${kb(worker)} kB, ${css}; routes for ${regions.join(', ') || 'no region'}`);
+  console.log(`dist/: ${app} ${kb(app)} kB, ${worker} ${kb(worker)} kB, ${css}; data: ${regions.join(', ') || 'no region'}`);
 }

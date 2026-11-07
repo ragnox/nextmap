@@ -2,7 +2,7 @@
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ROOT } from './util.js';
+import { ROOT, CACHE, readJSON } from './util.js';
 import { demTileGz, MAX_Z } from './dem.js';
 import { imageryTile } from './imagery.js';
 import { scene, s2Tile, S2_MAX_Z } from './sentinel.js';
@@ -91,6 +91,16 @@ const routes = [
   ['POST', /^\/api\/crawl$/, async (req, res) => {
     const b = await readBody(req);
     json(res, startCrawl(String(b.region || 'Zillertal'), Array.isArray(b.sources) && b.sources.length ? b.sources : undefined));
+  }],
+  // the path network from scripts/network.js
+  ['GET', /^\/api\/net$/, async (req, res) => {
+    const index = await readJSON('net/index.json');
+    index ? json(res, { ...index, path: 'api/net' }) : json(res, { error: 'no path network: run node scripts/network.js' }, 404);
+  }],
+  ['GET', /^\/api\/net\/(\d+)\/(\d+)\/(\d+)\.bin$/, async (req, res, m) => {
+    const [z, x, y] = tileArgs(m);
+    try { send(res, 200, await fs.readFile(path.join(CACHE, 'net', `${z}/${x}/${y}.bin`)), 'application/octet-stream', { 'Cache-Control': 'no-cache' }); }
+    catch { send(res, 404, 'no tile', 'text/plain'); }
   }],
   ['POST', /^\/api\/profile$/, async (req, res) => {
     const b = await readBody(req);

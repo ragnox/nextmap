@@ -39,18 +39,21 @@ On a phone the route list is a bottom sheet (tap its header to expand it) and th
 - **Routes**: the *Tyrol atlas*, all OpenStreetMap routes in Tyrol and about 8 km around it, measured, named and combined into Bike & Hike tours like a region crawl, published as JSON chunks (zoom 10, by where a route starts) in `dist/data/atlas/`. A region loads the chunks it covers. Only outside the atlas does “Search the web for routes” (or opening a region with nothing in it) search OpenStreetMap from the visitor's browser, measure the routes in the data worker and keep them in that browser.
 - **Search**: a place list of towns, villages, valleys, mountain ranges, peaks, huts and lakes (`dist/data/places.json`), searched as you type; Nominatim only for names not in it.
 - **Elevation and tiris maps**: `functions/up/` fetches tiris WCS coverages and map exports once and keeps them in R2 (and at the edge); the browser builds the tiles in a web worker with the same code the local server uses (`shared/`) and keeps them for the next visit. If the function fails, the worker asks tiris directly.
+- **Path network** (for the route planner, not used yet): every road, track and path in the atlas area that can be walked or cycled, from Geofabrik's OpenStreetMap extract of the Alps, as edges from junction to junction with their class, surface, hiking and MTB grade, foot and bicycle access, length, and climb and descent on the elevation model. It is cut into zoom-12 tiles (about 6.7 km across) in `dist/net/<version>/`, listed in `dist/data/net.json`: 145,700 km in 823 tiles, 15.6 MB in all (a tile is about 15 kB, central Innsbruck 165 kB), of which a route search will load only the tiles it reaches. The version is in the path, so browsers keep the tiles for good.
 - **Sentinel-2**: nextmap's own summer and winter mosaics (zoom 8–13 over the atlas area, each pixel from the least cloudy scene of the season) from `scripts/s2-mosaic.js`, in R2. The summer mosaic also fills the orthophoto where it has no data, in place of EOX's cloudless map (non-commercial licence). Regions outside use a current scene from the Planetary Computer as before.
 
 bergfex tours and GPX uploads stay in the local app, since bergfex's content is not ours to republish.
 
 ```bash
 node server/crawler/atlas.js                  # the Tyrol atlas: cache/atlas/ (an hour or more; Overpass is busy)
+curl -Lo cache/osm/alps-latest.osm.pbf https://download.geofabrik.de/europe/alps-latest.osm.pbf   # 2.3 GB
+node scripts/network.js                       # the path network: cache/net/ (about a minute)
 node scripts/s2-mosaic.js render summer       # and winter: cache/s2mosaic/<name>/
 npm run deploy                                # dist/ and functions/ to Cloudflare Pages
 node --env-file=.env scripts/s2-mosaic.js upload summer-2026 https://nextmap.pages.dev
 ```
 
-`npm run deploy` builds `dist/` (`npm run build:static`) from `cache/atlas/` (or, without it, the region crawls in `cache/routes/`) and uploads it with `wrangler pages deploy` to the `nextmap` project on the Cloudflare account wrangler is logged in to (`npx wrangler login`). `wrangler.toml` binds the R2 bucket `nextmap-data` as `TILES`; the mosaic upload sends `UPLOAD_KEY` from `.env`, and the site checks it against its SHA-256 in `wrangler.toml`. Code files carry a hash in their name, so a visitor never mixes old and new files.
+`npm run deploy` builds `dist/` (`npm run build:static`) from `cache/atlas/` and `cache/net/` (or, without the atlas, the region crawls in `cache/routes/`) and uploads it with `wrangler pages deploy` to the `nextmap` project on the Cloudflare account wrangler is logged in to (`npx wrangler login`). `wrangler.toml` binds the R2 bucket `nextmap-data` as `TILES`; the mosaic upload sends `UPLOAD_KEY` from `.env`, and the site checks it against its SHA-256 in `wrangler.toml`. Code files carry a hash in their name, so a visitor never mixes old and new files.
 
 ## Controls
 
@@ -80,6 +83,8 @@ The view glides on briefly after a drag, never goes below the ground, and moves 
 | `server/crawler/` | Regions, OSM and bergfex sources, Bike & Hike combinations, polite fetching, crawl jobs, and the Tyrol atlas (`atlas.js`) |
 | `functions/up/` | The public site's Pages Function: tiris through R2, and the Sentinel-2 mosaics |
 | `scripts/s2-mosaic.js` | Renders and uploads the summer and winter Sentinel-2 mosaics |
+| `scripts/network.js`, `server/network.js`, `server/osmpbf.js` | Builds the path network: reads the OpenStreetMap extract, keeps the ways for walking and cycling, splits them at junctions and tile edges, measures them |
+| `shared/network.js` | The path network's tiles: classes, surfaces and access, the format, reading a tile in the browser |
 | `src/crawl.js` | The public site's route search: OpenStreetMap from the browser, kept in Cache Storage |
 | `src/backend.js` | The local server's API, or on a static host the data worker, the atlas chunks, the place list and the mosaics |
 | `shared/places.js` | The place list: packing, search as you type, a place as a region |
