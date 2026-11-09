@@ -19,6 +19,7 @@ const clock = (t) => new Date(t).toLocaleTimeString('de-AT', { hour: '2-digit', 
 
 export function createUI(app) {
   const { terrain, routes, labels, camera, controls, frame, invalidate, backend } = app;
+  const count = app.stats?.count || (() => {});          // usage counts on the public site (src/stats.js)
   const local = backend.mode === 'server';            // crawler, bergfex and GPX uploads need the local server
   document.body.classList.toggle('static-site', !local);
   const state = { region: null, all: [], kind: 'all', q: '', sort: 'near', inView: false, selected: null, profile: null, crawling: false, s2: {} };
@@ -38,6 +39,7 @@ export function createUI(app) {
     link: () => `${location.origin}${location.pathname}?${stateQuery(collectState())}`,
     syncUrl: (push) => syncUrl(push),
     fit: (b) => app.flyToBounds(b),
+    count,
     setMarker: (at, ele) => {
       if (!at) { markerPos = null; marker.style.display = 'none'; invalidate(); return; }
       const [wx, wz] = frame.fromLonLat(at[0], at[1]);
@@ -61,12 +63,12 @@ export function createUI(app) {
     const open = $('mine-list').hidden;
     $('mine-list').hidden = !open; $('mine-toggle').setAttribute('aria-expanded', String(open));
   });
-  $('mine-list').addEventListener('click', (e) => { const li = e.target.closest('li[data-id]'); if (li) planner.openSaved(li.dataset.id); });
+  $('mine-list').addEventListener('click', (e) => { const li = e.target.closest('li[data-id]'); if (li) { planner.openSaved(li.dataset.id); count('planner', 'saved'); } });
   $('mine-list').hidden = false; $('mine-toggle').setAttribute('aria-expanded', 'true');
   renderMine();
   // a route from a link: the one kept under My routes if it is the same
   function openPlanFromLink(st) {
-    try { planner.open(planner.fromCode(st.plan, st.pname), { fit: !st.camera, id: savedPlans().find((p) => p.code === st.plan)?.id }); }
+    try { planner.open(planner.fromCode(st.plan, st.pname), { fit: !st.camera, id: savedPlans().find((p) => p.code === st.plan)?.id }); count('planner', 'link'); }
     catch { $('crawl-status').textContent = 'The route in this link could not be read.'; }
   }
 
@@ -101,6 +103,7 @@ export function createUI(app) {
   function choose(p) {
     showSuggestions([]);
     box.blur();
+    count('search', p.preset ? 'preset' : 'place');
     goRegion(p.name, true, { region: p.preset ? null : regionFromPlace(p) }).then(() => syncUrl(true));
   }
   box.addEventListener('input', suggest);
@@ -118,6 +121,7 @@ export function createUI(app) {
     e.preventDefault();
     if (hits.length && (cur >= 0 || box.value !== state.region?.name)) return choose(hits[Math.max(cur, 0)]);
     showSuggestions([]); box.blur();
+    count('search', 'text');
     goRegion(box.value, true).then(() => syncUrl(true));
   });
 
@@ -128,6 +132,7 @@ export function createUI(app) {
       const region = chosen || await backend.region(q || 'Zillertal', camera ? [camera.lon, camera.lat] : null);
       state.region = region;
       $('region').value = region.name;
+      count('region', region.name);
       app.setRegion(region, { fly: fly && !camera });
       if (camera) app.setCamera(camera);
       const data = await loadRoutes();
@@ -218,7 +223,7 @@ export function createUI(app) {
     document.querySelectorAll('#kind-filter button').forEach((x) => x.classList.toggle('on', x.dataset.kind === kind));
     state.kind = kind; applyFilter();
   }
-  document.querySelectorAll('#kind-filter button').forEach((b) => b.addEventListener('click', () => { setKind(b.dataset.kind); syncUrl(); }));
+  document.querySelectorAll('#kind-filter button').forEach((b) => b.addEventListener('click', () => { setKind(b.dataset.kind); count('kind', b.dataset.kind); syncUrl(); }));
   let qTimer;
   $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = $('q').value; applyFilter(); }, 150); });
   $('sort').addEventListener('change', () => { state.sort = $('sort').value; applyFilter(); });
@@ -238,6 +243,7 @@ export function createUI(app) {
     sheetSummary();
     if (r && phone() && side.dataset.sheet === 'peek') setSheet('half');
     if (!r) { $('detail').hidden = true; $('browse').hidden = false; $('crawl-box').hidden = false; return; }
+    count('route', r.source);
     $('browse').hidden = true; $('crawl-box').hidden = true; $('detail').hidden = false;
     $('d-name').textContent = r.name;
     $('d-badges').innerHTML = [`<span class="chip" style="border-color:${KIND_COLORS[r.kind] || '#999'}">${KIND_LABEL[r.kind] || r.kind}</span>`, `<span class="chip">${SOURCE_LABEL[r.source] || r.source}</span>`,
@@ -332,7 +338,7 @@ export function createUI(app) {
     $('d-actions').innerHTML = acts.join('');
     $('d-attach')?.addEventListener('click', () => gpxInput.click());
     $('d-zoom').onclick = () => zoomTo(r);
-    if (r.lines) { $('d-gpx').onclick = () => downloadGpx(r); $('d-copy').onclick = () => planner.open(planner.fromRoute(r)); }
+    if (r.lines) { $('d-gpx').onclick = () => { downloadGpx(r); count('gpx', 'route'); }; $('d-copy').onclick = () => { planner.open(planner.fromRoute(r)); count('planner', 'copy'); }; }
   }
   function renderStats(s) { $('d-stats').innerHTML = statsHtml(s); }
   function zoomTo(r) {
@@ -372,7 +378,7 @@ export function createUI(app) {
     await backend.startCrawl(state.region?.name || $('region').value, sources);
     pollCrawl();
   }
-  $('crawl').addEventListener('click', () => startCrawl([...document.querySelectorAll('#crawl-sources input:checked')].map((i) => i.value)));
+  $('crawl').addEventListener('click', () => { count('crawl', 'web'); startCrawl([...document.querySelectorAll('#crawl-sources input:checked')].map((i) => i.value)); });
   let lastReload = 0;
   async function pollCrawl() {
     const s = await backend.crawlStatus().catch(() => null);
@@ -433,10 +439,10 @@ export function createUI(app) {
     $('slope-legend').hidden = !$('l-slope').checked;
     routes.visible = $('l-routes').checked; invalidate();
   }
-  document.querySelectorAll('#season button').forEach((b) => b.addEventListener('click', () => { setSeason(b.dataset.season); syncUrl(); }));
-  $('imagery').addEventListener('change', () => { setImagery($('imagery').value); syncUrl(); });
-  document.querySelectorAll('#mapstyle button').forEach((b) => b.addEventListener('click', () => { setHybrid(b.dataset.style === 'hybrid'); syncUrl(); }));
-  for (const el of [$('l-routes'), $('l-slope'), $('l-contours'), ...document.querySelectorAll('[data-tiris]')]) el.addEventListener('change', () => { readLayers(); syncUrl(); });
+  document.querySelectorAll('#season button').forEach((b) => b.addEventListener('click', () => { setSeason(b.dataset.season); count('season', b.dataset.season); syncUrl(); }));
+  $('imagery').addEventListener('change', () => { setImagery($('imagery').value); count('imagery', $('imagery').value); syncUrl(); });
+  document.querySelectorAll('#mapstyle button').forEach((b) => b.addEventListener('click', () => { setHybrid(b.dataset.style === 'hybrid'); count('style', b.dataset.style); syncUrl(); }));
+  for (const el of [$('l-routes'), $('l-slope'), $('l-contours'), ...document.querySelectorAll('[data-tiris]')]) el.addEventListener('change', () => { readLayers(); if (el.checked) count('layer', el.dataset.tiris || el.id.replace('l-', '')); syncUrl(); });
   $('sun').addEventListener('input', () => { app.setSun($('sun').value / 100); syncUrl(); });
 
   // ------------------------------------------------------------ the address bar: every view is a link
@@ -543,7 +549,7 @@ export function createUI(app) {
   // navigation buttons and the help card
   const nav = { 'zoom-in': () => controls.zoomStep(1), 'zoom-out': () => controls.zoomStep(-1), tilt: () => controls.toggleTilt(), compass: () => controls.northUp(), 'help-btn': () => toggleHelp() };
   for (const [id, fn] of Object.entries(nav)) $(id).addEventListener('click', () => { fn(); invalidate(); });
-  const toggleHelp = (show = $('help').hidden) => { $('help').hidden = !show; };
+  const toggleHelp = (show = $('help').hidden) => { $('help').hidden = !show; if (show) count('help', 'open'); };
   $('help').addEventListener('click', (e) => { if (e.target === $('help') || e.target.closest('.close')) toggleHelp(false); });
   window.addEventListener('keydown', (e) => {
     if (e.target.closest?.('input, select, textarea')) return;

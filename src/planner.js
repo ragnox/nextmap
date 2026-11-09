@@ -45,6 +45,7 @@ export function createPlanner(app, hooks) {
     if (plan) flushSave();
     plan = p; saved = id; undo = []; redo = []; profile = null; fresh = false; gesture = null; autoFor = null;
     hooks.onOpen();
+    hooks.count?.('planner', 'open');
     $('plan').hidden = false;
     $('p-name').value = plan.name || '';
     note('');
@@ -178,7 +179,7 @@ export function createPlanner(app, hooks) {
   $('p-loop').addEventListener('click', () => commit(backToStart(plan)));
   $('p-outback').addEventListener('click', () => commit(outAndBack(plan)));
   $('p-clear').addEventListener('click', () => commit(emptyPlan(plan.activity, plan.name)));
-  $('p-save').addEventListener('click', () => save());
+  $('p-save').addEventListener('click', () => { save(); hooks.count?.('plan', 'save'); });
   $('p-delete').addEventListener('click', remove);
   $('p-gpx').addEventListener('click', exportGpx);
   $('p-share').addEventListener('click', share);
@@ -239,11 +240,13 @@ export function createPlanner(app, hooks) {
   }
   async function share() {
     const url = hooks.link();
+    hooks.count?.('plan', 'share');
     try { await navigator.clipboard.writeText(url); note('Link copied. It holds the whole route, so it opens for anyone, no account needed.'); } catch { window.prompt('Copy this link:', url); }
   }
   function exportGpx() {
     const line = planLine(plan);
     if (line.length < 2) return;
+    hooks.count?.('plan', 'gpx');
     const pts = fresh ? profile.coords.map((c, i) => [c[0], c[1], profile.e[i]]) : line.map(([a, b]) => [a, b, null]);
     saveFile(fileName(nameOf()), gpxText(nameOf(), [pts], hooks.link()));
   }
@@ -255,6 +258,7 @@ export function createPlanner(app, hooks) {
     const text = await file.text(), pts = gpxPoints(text);
     if (pts.length < 2) { if (plan) note(`${file.name} has no track in it.`); else hooks.status?.(`${file.name} has no track in it.`); return; }
     open(planFromLine(pts, { activity: plan?.activity || 'hike', name: gpxName(text) || file.name.replace(/\.gpx$/i, '') }), { fit: true });
+    hooks.count?.('planner', 'gpx');
     save();
   }
 

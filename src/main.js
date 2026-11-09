@@ -8,6 +8,7 @@ import { createUI } from './ui.js';
 import { Controls } from './controls.js';
 import { createBackend } from './backend.js';
 import { Labels } from './labels.js';
+import { createStats, statsEnabled } from './stats.js';
 
 const view = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -17,6 +18,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.5;
 renderer.autoClear = false;
 view.appendChild(renderer.domElement);
+renderer.domElement.addEventListener('webglcontextlost', () => stats.count('error', 'webgl'));
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 5, 600000);
@@ -30,6 +32,8 @@ sky.material.uniforms.mieCoefficient.value = 0.004; sky.material.uniforms.mieDir
 const START = { lon: 11.865, lat: 47.17 };
 const frame = new Frame(START.lon, START.lat);
 const backend = await createBackend();
+const stats = createStats({ enabled: statsEnabled(backend) });   // usage counts on the public site, see shared/stats.js
+stats.count('visit', window.innerWidth <= 760 ? 'phone' : 'desktop');
 const terrain = new Terrain(renderer, scene, frame, backend);
 const routes = new RouteLayer();
 terrain.routeLayer = routes;
@@ -125,7 +129,7 @@ function resize() {
 window.addEventListener('resize', resize);
 
 labels.onChange = invalidate;
-const ui = createUI({ terrain, routes, labels, camera, controls, frame, flyTo, flyToBounds, lookAt, setRegion, setSun, pickAt, invalidate, renderer, backend, cameraState, setCamera });
+const ui = createUI({ terrain, routes, labels, camera, controls, frame, flyTo, flyToBounds, lookAt, setRegion, setSun, pickAt, invalidate, renderer, backend, cameraState, setCamera, stats });
 
 let last = performance.now();
 function tick(now) {
@@ -159,4 +163,4 @@ terrain.onChange = () => {
   }
 };
 requestAnimationFrame(tick);
-window.nextmap = { terrain, routes, labels, camera, controls, frame, flyTo, lookAt, ui, backend };
+window.nextmap = { terrain, routes, labels, camera, controls, frame, flyTo, lookAt, ui, backend, stats };

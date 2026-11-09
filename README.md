@@ -44,6 +44,14 @@ On a phone the route list is a bottom sheet (tap its header to expand it) and th
 
 bergfex tours and GPX uploads stay in the local app, since bergfex's content is not ours to republish.
 
+### Visitors, usage and health
+
+The site counts visits with Cloudflare Web Analytics (no cookies, no personal data; the help card says so). What visitors do is counted as well — which regions they open, summer or winter, which layers, route kinds, the planner, GPX downloads, and what breaks in their browser — as tallies per visit, never per person: the browser adds up events from the whitelist in `shared/stats.js` and sends them once, when the tab is hidden, as one small beacon to `functions/stats.js`, which writes them to Workers Analytics Engine (dataset `nextmap_stats`, binding `STATS` in `wrangler.toml`). Nothing is stored in the browser, no identifier is sent, and visitors with Global Privacy Control are not counted. `functions/up/` writes one point per request that gets past the edge cache (what was asked, whether it came from R2 or tiris, how long it took) and logs the same line for `npx wrangler pages deployment tail --project-name nextmap`.
+
+- `node scripts/stats.js [today|week|month] [--markdown|--json]` — visits, countries, referrers, devices, load times, the usage counts, Function requests against the free 100,000 a day, R2 reads against the month's 10 million, and the up/ Function's health. `node scripts/stats.js check` exits 1 when a quota passes 70 % early in the day or 90 % at all, tiris fails for more than 5 % of fetches, or more than 2 % of visits hit a browser error. `node scripts/stats.js sql "SELECT …"` for anything else.
+- `tools/statsbar/install.sh` — StatsBar in the Mac menu bar (live visits in the title; audience, usage and quotas in submenus; amber at 70 %, red at 90 %, a notification once a day) and a weekly note every Monday 08:00 into `cache/stats/<year>-W<week>.md`, so a year of history exists.
+- Both use wrangler's login; the Analytics Engine SQL API may need `CLOUDFLARE_API_TOKEN` (see `.env.example`).
+
 ```bash
 node server/crawler/atlas.js                  # the Tyrol atlas: cache/atlas/ (an hour or more; Overpass is busy)
 curl -Lo cache/osm/alps-latest.osm.pbf https://download.geofabrik.de/europe/alps-latest.osm.pbf   # 2.3 GB

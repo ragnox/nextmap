@@ -8,6 +8,12 @@ compatibility_date = "2026-10-01"
 binding = "TILES"
 bucket_name = "nextmap-data"
 
+# Usage counts and Function health (functions/stats.js, functions/up/): tallies in Workers Analytics Engine, read with
+# scripts/stats.js. The dataset is made on the first write; nothing to create by hand.
+[[analytics_engine_datasets]]
+binding = "STATS"
+dataset = "nextmap_stats"
+
 [vars]
 # SHA-256 of UPLOAD_KEY in .env, the key scripts/s2-mosaic.js sends with the mosaic tiles (a new key: put its hash here)
 UPLOAD_KEY_SHA256 = "883e092a1d9fb8b3abfb0a53267562252945d2187bd1b4baaf5e02b24ffff25b"
