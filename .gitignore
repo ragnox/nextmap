@@ -6,4 +6,6 @@ public/app.js.map
 dist/
 public/worker.js
 public/worker.js.map
+public/routeworker.js
+public/routeworker.js.map
 .wrangler/

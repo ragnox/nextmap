@@ -102,6 +102,13 @@
       <button data-activity="emtb">eMTB</button>
       <button data-activity="skitour">Ski tour</button>
     </div>
+    <div id="p-way">
+      <div class="seg" id="p-mode" role="group" aria-label="New legs">
+        <button data-mode="path" title="New legs follow roads, tracks and paths">Follow paths</button>
+        <button data-mode="free" title="New legs run straight over the ground, or as drawn with the pen">Freehand</button>
+      </div>
+      <label class="small"><span id="p-grade-label">Keeps to</span> <select id="p-grade" aria-label="Grade"></select></label>
+    </div>
     <div class="tools" id="p-tools">
       <button id="p-pen" aria-pressed="false" title="Draw the way by hand (P)">✎ Pen</button>
       <button id="p-undo" title="Undo (⌘Z)" aria-label="Undo">↶</button>
@@ -116,6 +123,7 @@
     <canvas id="p-profile" width="680" height="200" hidden></canvas>
     <div id="p-legend-title" class="small muted"></div>
     <div id="p-legend" class="legend"></div>
+    <div id="p-route" class="small" hidden></div>
     <div id="p-note" class="small muted"></div>
     <div class="row" id="p-actions">
       <button id="p-save" class="primary" hidden>Keep in My routes</button>
@@ -124,7 +132,7 @@
       <button id="p-import">Open GPX…</button>
       <button id="p-delete" class="ghost" hidden>Delete</button>
     </div>
-    <p class="small muted">Lines are drawn freehand: straight between points, or as you draw them. Elevation from the Land Tirol laser scan. Times are estimates: DIN 33466 for hiking, Munter for ski tours.</p>
+    <p class="small muted">Legs follow the roads, tracks and paths of OpenStreetMap, taking easier ways where they can and marking the stretches to push or carry the bike or harder than your grade, or run freehand: straight between points, or as you draw them. Elevation from the Land Tirol laser scan. Times are estimates: DIN 33466 for hiking, Munter for ski tours.</p>
   </section>
 </aside>
 
@@ -195,13 +203,14 @@
     </div>
     <h3 class="sub">Planning a route</h3>
     <div class="keys">
-      <b>Click</b><span>Add a point; the route runs straight over the ground to it</span>
+      <b>Click</b><span>Add a point; the route follows roads and paths to it (or, with Freehand, runs straight over the ground)</span>
       <b>Drag a point · click it</b><span>Move it · remove it</span>
       <b>Drag the line · click it</b><span>Add a point there</span>
       <b><kbd>P</kbd></b><span>Pen: drag to draw the way by hand (the map stays put)</span>
       <b><kbd>⌘</kbd><kbd>Z</kbd> · <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd></b><span>Undo · redo</span>
       <b><kbd>⌫</kbd></b><span>Remove the last point</span>
     </div>
+    <p class="small">Nothing is ruled out: harder ways are only taken where nothing easier goes, and marked with dashes on the line and in the profile — paths harder than your grade, and on a bike the stretches to push or carry. Where riding ends, “Leave the bike here” walks the rest (Bike &amp; Hike).</p>
     <h3 class="privacy">Privacy</h3>
     <p class="small privacy">The public site counts visits with Cloudflare Web Analytics: no cookies, nothing stored on your device, no personal data and no tracking across other sites. To see which regions and functions are used, it also counts, once per visit, which regions you opened and which functions you used — as numbers only, without any identifier, and not at all if your browser sends Global Privacy Control. Your map view and routes stay in your browser. Routes, place names, the Land Tirol elevation and nextmap's Sentinel-2 mosaics come from this site; the rest loads straight from its providers (basemap.at, AWS, OpenFreeMap, and Microsoft Planetary Computer or OpenStreetMap when you look outside Tyrol), which see your IP address as any website you visit does.</p>
   </div>

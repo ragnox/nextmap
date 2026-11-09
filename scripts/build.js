@@ -1,5 +1,5 @@
 // Builds the browser code.
-//   node scripts/build.js            public/app.js and public/worker.js, for the local server (npm start)
+//   node scripts/build.js            public/app.js and its two workers, for the local server (npm start)
 //   node scripts/build.js --watch    the same, rebuilt on every change
 //   node scripts/build.js --static   dist/: the whole site for a static host (Cloudflare Pages), with the
 //                                    OpenStreetMap routes of the Tyrol atlas (cache/atlas/, in zoom-10 chunks) or
@@ -20,9 +20,9 @@ const arg = process.argv[2];
 const CF_BEACON = 'f19449d62d184f05b822eeb5d27f4c2f';
 
 if (arg !== '--static') {
-  const opts = { ...common, entryPoints: { app: at('src/main.js'), worker: at('src/worker.js') }, outdir: at('public'), sourcemap: true, minify: arg !== '--watch' };
+  const opts = { ...common, entryPoints: { app: at('src/main.js'), worker: at('src/worker.js'), routeworker: at('src/routeworker.js') }, outdir: at('public'), sourcemap: true, minify: arg !== '--watch' };
   if (arg === '--watch') { await (await esbuild.context(opts)).watch(); console.log('watching src/ and shared/'); }
-  else { await esbuild.build(opts); console.log('built public/app.js and public/worker.js'); }
+  else { await esbuild.build(opts); console.log('built public/app.js, public/worker.js and public/routeworker.js'); }
 } else {
   const DIST = at('dist');
   fs.rmSync(DIST, { recursive: true, force: true });
@@ -32,7 +32,8 @@ if (arg !== '--static') {
   const bundle = async (entry, define = {}) => (await esbuild.build({ ...common, entryPoints: [at(entry)], write: false, minify: true, define })).outputFiles[0].text;
 
   const worker = emit('worker', 'js', await bundle('src/worker.js', { 'globalThis.NEXTMAP_PROXY': 'true' }));
-  const app = emit('app', 'js', await bundle('src/main.js', { 'globalThis.NEXTMAP_WORKER': JSON.stringify(worker) }));
+  const router = emit('routeworker', 'js', await bundle('src/routeworker.js'));
+  const app = emit('app', 'js', await bundle('src/main.js', { 'globalThis.NEXTMAP_WORKER': JSON.stringify(worker), 'globalThis.NEXTMAP_ROUTER': JSON.stringify(router) }));
   const css = emit('style', 'css', fs.readFileSync(at('public/style.css'), 'utf8'));
   const html = fs.readFileSync(at('public/index.html'), 'utf8')
     .replace('href="style.css"', `href="${css}"`)
@@ -113,9 +114,9 @@ if (arg !== '--static') {
     '/data/*', '  Cache-Control: public, max-age=600',
     '/manifest.webmanifest', '  Content-Type: application/manifest+json',
     '/net/*', '  Cache-Control: public, max-age=31536000, immutable',
-    ...[worker, app, css].flatMap((f) => [`/${f}`, '  Cache-Control: public, max-age=31536000, immutable']),
+    ...[worker, router, app, css].flatMap((f) => [`/${f}`, '  Cache-Control: public, max-age=31536000, immutable']),
   ].join('\n') + '\n');
 
   const kb = (f) => Math.round(fs.statSync(path.join(DIST, f)).size / 1024);
-  console.log(`dist/: ${app} ${kb(app)} kB, ${worker} ${kb(worker)} kB, ${css}; data: ${regions.join(', ') || 'no region'}`);
+  console.log(`dist/: ${app} ${kb(app)} kB, ${worker} ${kb(worker)} kB, ${router} ${kb(router)} kB, ${css}; data: ${regions.join(', ') || 'no region'}`);
 }

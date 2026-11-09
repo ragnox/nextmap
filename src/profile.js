@@ -2,7 +2,7 @@
 // Steep stretches can be filled in the colour of their class (one colour or null per sample).
 const PAD = { l: 44, r: 8, t: 10, b: 22 };
 
-export function drawProfile(canvas, p, { color = '#ff5a2e', colors = null, hover = -1 } = {}) {
+export function drawProfile(canvas, p, { color = '#ff5a2e', colors = null, hover = -1, marks = [] } = {}) {
   const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
   const es = p.e.filter((v) => v != null);
@@ -30,6 +30,10 @@ export function drawProfile(canvas, p, { color = '#ff5a2e', colors = null, hover
     i = j + 1;
   }
   ctx.beginPath(); curve(); ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+  // the marked stretches ([from, to] metres): a dashed bar along the axis
+  ctx.setLineDash([8, 10]);
+  for (const [a, b] of marks) { ctx.beginPath(); ctx.moveTo(X(a), H - PAD.b - 4); ctx.lineTo(X(b), H - PAD.b - 4); ctx.strokeStyle = '#141414'; ctx.lineWidth = 8; ctx.stroke(); ctx.strokeStyle = '#f6f5f0'; ctx.lineWidth = 3; ctx.stroke(); }
+  ctx.setLineDash([]);
   if (hover >= 0) {
     const x = X(p.d[hover]);
     ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, H - PAD.b); ctx.stroke();

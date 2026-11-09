@@ -1,17 +1,20 @@
-// Planning a route on the map. A click adds a waypoint, and each leg runs freehand: a straight line over the ground,
-// or a line drawn with the pen. Drag a waypoint to move it, drag the line (or click it) to put a waypoint in, click a
-// waypoint to take it out; ⌘Z undoes. Length, climb, time and the elevation profile follow every change, and steep
-// stretches are coloured on the map and in the profile. Plans are kept in this browser (My routes), in the link and
-// as GPX.
+// Planning a route on the map. A click adds a waypoint; a leg follows roads and paths to it (the route worker finds
+// the way on nextmap's path network, shared/router.js) or runs freehand: a straight line over the ground, or a line
+// drawn with the pen. Drag a waypoint to move it (the way follows as you drag), drag the line (or click it) to put a
+// waypoint in, click a waypoint to take it out; ⌘Z undoes. Length, climb, time and the elevation profile follow every
+// change, steep stretches are coloured on the map and in the profile, and the stretches to push or carry the bike,
+// or harder than the grade, are marked; a bike can be left where riding ends (Bike & Hike). Plans are kept in this
+// browser (My routes), in the link and as GPX.
 import * as THREE from 'three';
 import { PlanLayer } from './planlayer.js';
 import { drawProfile, profileIndex } from './profile.js';
 import { gpxText, gpxPoints, gpxName, fileName, saveFile } from './gpx.js';
-import { km, hm, statsHtml } from './format.js';
+import { km, hm, statsHtml, esc } from './format.js';
 import { haversine, lineLength, simplify, densify } from '../shared/geo.js';
 import {
   emptyPlan, addPoint, movePoint, insertPoint, removePoint, reverse, backToStart, outAndBack, planLine, legLine,
-  nearestLeg, planFromLine, encodePlan, decodePlan, estimateTime, steepColors, GRADE_CLASSES, SLOPE_CLASSES, ACTIVITIES,
+  nearestLeg, planFromLine, encodePlan, decodePlan, steepColors, GRADE_CLASSES, SLOPE_CLASSES, ACTIVITIES, GRADES, RIDE,
+  splitAt, parkAt, walkedLegs, legProfile, routeKey, routeKeyOf, needsRoute, setRoute, planMarks, planTime,
 } from '../shared/plan.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,6 +22,28 @@ const STORE = 'nextmap-plans';
 export const ACTIVITY_LABEL = { hike: 'Hike', mtb: 'Mountain bike ride', emtb: 'eMTB ride', skitour: 'Ski tour' };
 const NAMED_AFTER = new Set(['city', 'town', 'village', 'hamlet', 'hut', 'lake']);
 const GRAB_PX = 8;                                      // how close to the line a press grabs it
+const FOLLOW = 'nextmap-follow';
+// the grades by name, and what a marked stretch means
+const GRADE_NAMES = {
+  T: ['', 'T1 · hiking trail', 'T2 · mountain hiking', 'T3 · demanding mountain hiking', 'T4 · alpine hiking', 'T5 · demanding alpine hiking', 'T6 · difficult alpine hiking'],
+  S: ['S0 · smooth, no obstacles', 'S1 · roots and gravel', 'S2 · rocks and steps', 'S3 · steep, big rocks', 'S4 · very steep, hairpins', 'S5 · blocks, extreme'],
+};
+const MARK_LABEL = {
+  push: (g) => `Push the bike: harder than ${g}`, steep: () => 'Push the bike: too steep to ride up', against: () => 'Push the bike: against a one-way street',
+  carry: () => 'Carry the bike: steps or alpine path', hard: (g) => `Harder than ${g}`, closed: () => 'Closed to walkers',
+};
+const BIKE_MARK = new Set(['push', 'steep', 'against', 'carry']);
+const FAILED = {
+  outside: 'Outside Tyrol and the area around it there is no path network yet, so a leg runs straight.',
+  from: 'No road or path within 150 m of a point, so a leg runs straight. Freehand draws it your way.',
+  to: 'No road or path within 150 m of a point, so a leg runs straight. Freehand draws it your way.',
+  none: 'No road or path joins two of the points, so a leg runs straight.',
+  far: 'A leg over 60 km is not searched: add a point in between.',
+  nonet: 'The path network is not available here, so legs run straight.',
+  failed: 'Finding the way failed (no connection?), so a leg runs straight. Move a point to try again.',
+};
+const pt = (p) => `${p[0]},${p[1]}`;
+const dist = (m) => (m < 950 ? `${Math.round(m / 10) * 10} m` : km(m));
 
 // My routes: the plans kept in this browser
 export function savedPlans() { try { return JSON.parse(localStorage.getItem(STORE)) || []; } catch { return []; } }
@@ -34,6 +59,8 @@ export function createPlanner(app, hooks) {
   const canvas = renderer.domElement, view = $('view'), sketchCanvas = $('plan-draw'), dctx = sketchCanvas.getContext('2d');
   let plan = null, saved = null, undo = [], redo = [], profile = null, fresh = false, pen = false, gesture = null, hoverAt = null, lastAdd = null;
   let season = null, autoName = '', autoFor = null;
+  let follow = true, busy = false;
+  const snaps = new Map(), routes = new Map();            // waypoints on the network, and legs routed (or in work)
 
   // your own route is white, so it stands out from the routes of the atlas; steep stretches are coloured on top
   const color = () => '#f6f5f0';
@@ -44,6 +71,7 @@ export function createPlanner(app, hooks) {
   function open(p, { id = null, fit = false } = {}) {
     if (plan) flushSave();
     plan = p; saved = id; undo = []; redo = []; profile = null; fresh = false; gesture = null; autoFor = null;
+    follow = followFor(p.activity);
     hooks.onOpen();
     hooks.count?.('planner', 'open');
     $('plan').hidden = false;
@@ -87,12 +115,109 @@ export function createPlanner(app, hooks) {
   }
   const undoStep = () => step(undo, redo), redoStep = () => step(redo, undo);
   function changed() { show(); autosave(); hooks.syncUrl(); }
+  // the plan finished by the route worker: not a step of its own to undo
+  function amend(next) { plan = { ...next, name: plan.name }; changed(); }
 
-  // the plan on the map and in the panel; the profile follows
+  // the plan on the map and in the panel; the profile follows, and the legs that follow paths are routed
   function show() {
-    layer.set([planLine(plan)], color());
+    layer.set([planLine(plan)], color(), null, markLines());
     invalidate();
     syncHandles(); renderPanel(); queueProfile(); nameAfterStart();
+    settle();
+  }
+
+  // ------------------------------------------------------------ following roads and paths
+  // whether new legs follow paths, as last chosen for the activity (ski tours go freehand unless told otherwise)
+  function followFor(activity) {
+    try { const v = JSON.parse(localStorage.getItem(FOLLOW))?.[activity]; if (typeof v === 'boolean') return v; } catch { /* not kept */ }
+    return activity !== 'skitour';
+  }
+  function setFollow(on) {
+    follow = on;
+    try { const all = JSON.parse(localStorage.getItem(FOLLOW)) || {}; all[plan.activity] = on; localStorage.setItem(FOLLOW, JSON.stringify(all)); } catch { /* not kept */ }
+    show();
+  }
+  const mode = () => (follow ? 'path' : 'free');
+  const cap = (m) => { while (m.size > 600) m.delete(m.keys().next().value); };
+  // a waypoint at a leg that follows paths (or the first one, when the next leg will) goes onto the network
+  const onPath = (P, i) => P.legs[i - 1]?.mode === 'path' || P.legs[i]?.mode === 'path' || (P.points.length === 1 && follow);
+
+  // brings the plan up to date with the network, one step at a time: waypoints snapped, then legs routed. Answers
+  // come back from the worker and call this again; nothing waits for them.
+  function settle() {
+    if (!plan || gesture?.moved) return;
+    const P = plan;
+    let next = P, pending = 0;
+    P.points.forEach((p, i) => {
+      if (!onPath(P, i)) return;
+      const s = snaps.get(pt(p));
+      if (s === undefined) {
+        snaps.set(pt(p), backend.snap(p).then((r) => { snaps.set(pt(p), r || false); if (r) snaps.set(pt(r), r); settle(); },
+          () => { snaps.set(pt(p), false); settle(); }));
+        cap(snaps);
+      }
+      if (s === undefined || s instanceof Promise) pending++;
+      else if (s && pt(s) !== pt(p)) next = movePoint(next, i, s);
+    });
+    if (next !== P) { amend(next); return; }
+    P.legs.forEach((l, i) => {
+      if (!needsRoute(P, i)) return;
+      const sa = snaps.get(pt(P.points[i])), sb = snaps.get(pt(P.points[i + 1]));
+      if (sa === undefined || sb === undefined || sa instanceof Promise || sb instanceof Promise) { pending++; return; }
+      const key = routeKey(P, i), r = routes.get(key);
+      if (r === undefined) {
+        routes.set(key, backend.route(P.points[i], P.points[i + 1], legProfile(P, i))
+          .then((x) => { routes.set(key, x); settle(); }, () => { routes.set(key, { error: 'failed' }); settle(); }));
+        cap(routes);
+      }
+      if (r === undefined || r instanceof Promise) pending++;
+      else next = setRoute(next, i, r);
+    });
+    if (next !== P) { amend(next); return; }
+    if (busy !== pending > 0) { busy = pending > 0; renderPanel(); }
+  }
+
+  // while a point is dragged, the legs it pulls are routed to where it is now (one search at a time); the answers
+  // also stand ready for when it is let go
+  function preview(g) {
+    const T = g.temp, k = g.kind === 'move' ? g.i : g.leg + 1;
+    const legs = [k - 1, k].filter((j) => T.legs[j]?.mode === 'path');
+    if (!legs.length) return;
+    if (g.busy) { g.again = true; return; }
+    g.busy = true;
+    Promise.all(legs.map((j) => backend.route(T.points[j], T.points[j + 1], legProfile(T, j)).then((r) => [j, r], () => [j, { error: 'failed' }]))).then((rs) => {
+      g.busy = false;
+      if (gesture !== g) return;
+      g.preview = Object.fromEntries(rs);
+      for (const [j, r] of rs) {
+        if (r.error) continue;
+        const raw = T.points[k], at = j === k - 1 ? r.to : r.from;
+        snaps.set(pt(raw), at); snaps.set(pt(at), at);
+        routes.set(routeKeyOf(legProfile(T, j), r.from, r.to), r);
+      }
+      cap(snaps); cap(routes);
+      paint();
+      if (g.again) { g.again = false; preview(gesture); }
+    });
+  }
+
+  // the marked stretches: where along the route ([from, to] metres), what, and the first point
+  function stretches() {
+    const line = planLine(plan), at = [0];
+    for (let i = 1; i < line.length; i++) at.push(at[i - 1] + haversine(line[i - 1], line[i]));
+    return planMarks(plan).map(([a, b, why]) => ({ a, b, why, from: at[a], to: at[b], start: line[a] }));
+  }
+  const markLines = () => { const line = planLine(plan); return planMarks(plan).map(([a, b]) => line.slice(a, b + 1)); };
+  const gradeName = () => `${GRADES[plan.activity].scale}${plan.grade}`;
+  // the bike left at the start of a marked stretch: a waypoint there, walked on from it
+  function parkAtStretch(m) {
+    let at = 0;
+    for (let i = 0; i < plan.legs.length; i++) {
+      const L = plan.legs[i].via.length + 1;
+      if (m.a === at) { commit(parkAt(plan, i)); return; }
+      if (m.a < at + L) { commit(parkAt(splitAt(plan, i, m.a - at), i + 1)); return; }
+      at += L;
+    }
   }
 
   // ------------------------------------------------------------ profile, figures, colours
@@ -118,12 +243,12 @@ export function createPlanner(app, hooks) {
     renderLegend();
     if (!profile || !plan) return;
     profile.colors = steepColors(profile, season === 'winter');
-    if (!gesture?.moved) layer.set([profile.coords], color(), profile.colors);
+    if (!gesture?.moved) layer.set([profile.coords], color(), profile.colors, markLines());
     invalidate(); drawProf();
   }
   function renderStats() {
     const line = planLine(plan), len = line.length > 1 ? lineLength(line) : null, p = fresh ? profile : null;
-    $('p-stats').innerHTML = statsHtml({ length: len, ascent: p?.ascent, descent: p?.descent, max: p?.max, min: p?.min, duration: p ? estimateTime(plan.activity, p) : null });
+    $('p-stats').innerHTML = statsHtml({ length: len, ascent: p?.ascent, descent: p?.descent, max: p?.max, min: p?.min, duration: p ? planTime(plan, p) : null });
     hooks.summary();
   }
   function renderLegend() {
@@ -134,7 +259,7 @@ export function createPlanner(app, hooks) {
   const pc = $('p-profile');
   function drawProf(hover = -1) {
     pc.hidden = !profile;
-    if (profile) drawProfile(pc, profile, { color: color(), colors: profile.colors, hover });
+    if (profile) drawProfile(pc, profile, { color: color(), colors: profile.colors, hover, marks: plan ? stretches().map((m) => [m.from, m.to]) : [] });
   }
   pc.addEventListener('pointermove', (e) => {
     if (!profile) return;
@@ -145,8 +270,14 @@ export function createPlanner(app, hooks) {
 
   // ------------------------------------------------------------ the panel
   function renderPanel() {
-    const n = plan.points.length;
+    const n = plan.points.length, G = GRADES[plan.activity];
     document.querySelectorAll('#p-activity button').forEach((b) => b.classList.toggle('on', b.dataset.activity === plan.activity));
+    document.querySelectorAll('#p-mode button').forEach((b) => b.classList.toggle('on', (b.dataset.mode === 'path') === follow));
+    const sel = $('p-grade'), opts = GRADE_NAMES[G.scale].slice(G.min).map((t, i) => `<option value="${G.min + i}">${t}</option>`).join('');
+    if (sel.dataset.scale !== G.scale) { sel.innerHTML = opts; sel.dataset.scale = G.scale; }
+    sel.value = String(plan.grade);
+    $('p-grade-label').textContent = RIDE[plan.activity] ? 'Rides up to' : 'Keeps to';
+    renderRoute();
     $('p-undo').disabled = !undo.length; $('p-redo').disabled = !redo.length;
     for (const id of ['p-reverse', 'p-loop', 'p-outback', 'p-gpx', 'p-share']) $(id).disabled = n < 2;
     $('p-clear').disabled = !n;
@@ -154,9 +285,42 @@ export function createPlanner(app, hooks) {
     $('p-delete').hidden = !saved;
     $('p-saved').textContent = saved ? 'Kept in this browser under My routes' : '';
     $('p-hint').textContent = pen ? 'Pen: drag on the map to draw the way. The map stays put until you put the pen away (P).'
+      : busy ? 'Finding the way along roads and paths…'
       : !n ? 'Click the map where the route starts, or take the pen and draw it.'
-      : n === 1 ? 'Click to add the next point. The route runs straight over the ground between points.'
+      : n === 1 ? (follow ? 'Click to add the next point. The route follows roads and paths to it.' : 'Click to add the next point. The route runs straight over the ground between points.')
       : 'Drag a point to move it, drag the line to add one, click a point to remove it.';
+  }
+
+  // what the route asks of you: the marked stretches (with a place to leave the bike), legs that could not follow
+  // paths, and where the bike is left
+  function renderRoute() {
+    const box = $('p-route'), ride = !!RIDE[plan.activity], walked = walkedLegs(plan), list = stretches();
+    const parts = [];
+    if (ride && plan.park != null && walked.some(Boolean)) {
+      const line = planLine(plan);
+      let at = 0;
+      for (let i = 0; i < plan.park; i++) at += plan.legs[i].via.length + 1;
+      const d = line.slice(0, at + 1).reduce((s, q, i, a) => (i ? s + haversine(a[i - 1], q) : 0), 0);
+      parts.push(`<div class="park"><b>Bike left at ${km(d)}</b>, walked on from there${walked.at(-1) ? '' : ' and back'}. <button data-unpark>Ride all the way</button></div>`);
+    }
+    for (const [i, m] of list.entries()) {
+      // a bike's marks go by its grade, a hike's by the hiker's, the walked part of a Bike & Hike by the usual T3
+      const label = MARK_LABEL[m.why]?.(BIKE_MARK.has(m.why) || !ride ? gradeName() : `T${GRADES.hike.def}`) || m.why;
+      const len = m.to - m.from, offer = ride && BIKE_MARK.has(m.why) && plan.park == null && len >= 100;
+      parts.push(`<div class="mark"><a href="#" data-mark="${i}">${esc(label)}</a> <span class="muted">${dist(len)} from ${km(m.from)}</span>${offer ? ` <button data-park="${i}">Leave the bike here</button>` : ''}</div>`);
+    }
+    const failed = [...new Set(plan.legs.filter((l) => l.mode === 'path' && l.failed).map((l) => FAILED[l.failed] || FAILED.failed))];
+    for (const f of failed) parts.push(`<div class="muted">${esc(f)}</div>`);
+    box.innerHTML = parts.join('');
+    box.hidden = !parts.length;
+    box.onclick = (e) => {
+      const t = e.target.closest('[data-mark], [data-park], [data-unpark]');
+      if (!t) return;
+      e.preventDefault();
+      if (t.dataset.unpark !== undefined) commit(parkAt(plan, null));
+      else if (t.dataset.park) parkAtStretch(list[Number(t.dataset.park)]);
+      else { const m = list[Number(t.dataset.mark)]; hooks.setMarker(m.start); }
+    };
   }
 
   function setPen(on) {
@@ -170,13 +334,20 @@ export function createPlanner(app, hooks) {
   $('p-close').addEventListener('click', () => close());
   $('p-name').addEventListener('input', () => { plan.name = $('p-name').value; autosave(); hooks.syncUrl(); hooks.summary(); });
   document.querySelectorAll('#p-activity button').forEach((b) => b.addEventListener('click', () => {
-    if (plan.activity !== b.dataset.activity) { commit({ ...plan, activity: b.dataset.activity }); autoFor = null; nameAfterStart(); }
+    const a = b.dataset.activity;
+    if (plan.activity === a) return;
+    // a grade on the other scale goes back to that scale's usual one
+    const grade = GRADES[a].scale === GRADES[plan.activity].scale ? plan.grade : GRADES[a].def;
+    follow = followFor(a);
+    commit({ ...plan, activity: a, grade }); autoFor = null; nameAfterStart();
   }));
+  document.querySelectorAll('#p-mode button').forEach((b) => b.addEventListener('click', () => setFollow(b.dataset.mode === 'path')));
+  $('p-grade').addEventListener('change', () => commit({ ...plan, grade: Number($('p-grade').value) }));
   $('p-pen').addEventListener('click', () => setPen(!pen));
   $('p-undo').addEventListener('click', undoStep);
   $('p-redo').addEventListener('click', redoStep);
   $('p-reverse').addEventListener('click', () => commit(reverse(plan)));
-  $('p-loop').addEventListener('click', () => commit(backToStart(plan)));
+  $('p-loop').addEventListener('click', () => commit(backToStart(plan, mode())));
   $('p-outback').addEventListener('click', () => commit(outAndBack(plan)));
   $('p-clear').addEventListener('click', () => commit(emptyPlan(plan.activity, plan.name)));
   $('p-save').addEventListener('click', () => { save(); hooks.count?.('plan', 'save'); });
@@ -275,7 +446,7 @@ export function createPlanner(app, hooks) {
     while (handles.length > pts.length) handles.pop().remove();
     handles.forEach((h, i) => {
       h.dataset.i = i;
-      h.className = `wp${i === 0 ? ' start' : ''}${i && i === pts.length - 1 ? ' end' : ''}`;
+      h.className = `wp${i === 0 ? ' start' : ''}${i && i === pts.length - 1 ? ' end' : ''}${i === shown().park && RIDE[shown().activity] ? ' park' : ''}`;
       h.title = i === 0 ? 'Start · drag to move, click to remove' : i === pts.length - 1 ? 'End · drag to move, click to remove' : 'Drag to move, click to remove';
     });
     placeHandles();
@@ -332,7 +503,7 @@ export function createPlanner(app, hooks) {
       if (Math.hypot(e.clientX - lx, e.clientY - ly) < 3) return;
       g.screen.push([e.clientX, e.clientY]);
       if (at) { g.pts.push(at); g.mPerPx = p.mPerPx; }
-    } else if (at) g.temp = g.kind === 'move' ? movePoint(plan, g.i, at) : movePoint(insertPoint(plan, g.leg, g.at0), g.leg + 1, at);
+    } else if (at) { g.temp = g.kind === 'move' ? movePoint(plan, g.i, at) : movePoint(insertPoint(plan, g.leg, g.at0), g.leg + 1, at); preview(g); }
     syncHandles(); paint();
   });
   window.addEventListener('pointerup', (e) => {
@@ -371,7 +542,7 @@ export function createPlanner(app, hooks) {
     const now = performance.now();
     if (lastAdd && now - lastAdd.t < 350 && Math.hypot(x - lastAdd.x, y - lastAdd.y) < 10) return;
     lastAdd = { t: now, x, y };
-    commit(addPoint(plan, [p.lon, p.lat]));
+    commit(addPoint(plan, [p.lon, p.lat], [], mode()));
   }
   function cursor(p) {
     if (pen) return 'crosshair';
@@ -407,8 +578,9 @@ export function createPlanner(app, hooks) {
       const k = g.kind === 'move' ? g.i : g.leg + 1;
       for (const j of [k - 1, k]) {
         if (j < 0 || j >= g.temp.legs.length) continue;
-        const line = legLine(g.temp, j), len = lineLength(line);
-        stroke(densify(line, Math.max(5, len / 48)).map(screenOf).filter(Boolean));
+        const r = g.temp.legs[j].mode === 'path' && g.preview?.[j];
+        const line = r && !r.error ? [r.from, ...r.via, r.to] : legLine(g.temp, j), len = lineLength(line);
+        stroke(densify(line, Math.max(5, len / 48)).map(screenOf).filter(Boolean), r && r.error ? [6, 8] : []);
       }
     } else if (hoverAt) {
       const a = screenOf(plan.points.at(-1));
@@ -430,6 +602,7 @@ export function createPlanner(app, hooks) {
     frame: frameUpdate,
     pickFile: () => fileInput.click(),
     active: () => !!plan,
+    plan: () => plan,
     code: () => (plan?.points.length ? encodePlan(plan) : null),
     name: () => plan?.name?.trim() || null,
     summary: () => {

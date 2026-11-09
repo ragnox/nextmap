@@ -30,20 +30,36 @@ async function bitmap(url) {
   return createImageBitmap(await res.blob(), { imageOrientation: 'none', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
 }
 
-// the data worker, started on first use
-let workerCall = null;
-function dataWorker() {
-  if (workerCall) return workerCall;
-  const worker = new Worker(new URL(globalThis.NEXTMAP_WORKER || 'worker.js', document.baseURI), { type: 'module' });
+// a module worker answering calls ({ id, op, args } in, { id, result | error } out)
+function rpcWorker(url) {
+  const worker = new Worker(new URL(url, document.baseURI), { type: 'module' });
   let seq = 0;
   const calls = new Map();
   worker.onmessage = ({ data: { id, result, error } }) => {
     const c = calls.get(id); calls.delete(id);
     error ? c.reject(new Error(error)) : c.resolve(result);
   };
-  workerCall = (op, ...args) => new Promise((resolve, reject) => { const id = ++seq; calls.set(id, { resolve, reject }); worker.postMessage({ id, op, args }); });
-  return workerCall;
+  return (op, ...args) => new Promise((resolve, reject) => { const id = ++seq; calls.set(id, { resolve, reject }); worker.postMessage({ id, op, args }); });
 }
+// the data worker, started on first use
+let workerCall = null;
+const dataWorker = () => (workerCall ||= rpcWorker(globalThis.NEXTMAP_WORKER || 'worker.js'));
+// the route worker (src/routeworker.js), started with the path network's index on first use
+function routing(network) {
+  let ready = null;
+  const call = (...a) => (ready ||= (async () => {
+    const rpc = rpcWorker(globalThis.NEXTMAP_ROUTER || 'routeworker.js');
+    await rpc('init', await network(), document.baseURI);
+    return rpc;
+  })()).then((rpc) => rpc(...a));
+  return {
+    // p on the nearest road or path within 150 m, or null
+    snap: (p) => call('snap', p),
+    // the way from a to b for { activity, grade } (shared/router.js route)
+    route: (a, b, profile) => call('route', a, b, profile),
+  };
+}
+
 // both modes draw the hybrid layer and read label names in the browser
 const hybridParts = {
   hybridTile: (z, x, y) => dataWorker()('hybrid', z, x, y),
@@ -61,7 +77,7 @@ function serverBackend() {
     region: (name, near) => getJSON(`api/region?q=${q(name)}${nearArg(near)}`),
     routes: (region) => getJSON(`api/routes?region=${q(region.name)}${nearArg(region.view)}`),
     profile: (lines, opts = {}) => post('api/profile', { lines, ...opts }),
-    network: lazy(() => getJSON('api/net').catch(() => null)),
+    ...routing(lazy(() => getJSON('api/net').catch(() => null))),
     s2Scene: (season, region) => getJSON(`api/s2/${season}?region=${q(region.name)}`),
     sources: () => getJSON('api/sources'),
     startCrawl: (region, sources) => post('api/crawl', { region, sources }),
@@ -133,7 +149,7 @@ function staticBackend() {
     },
     profile: (lines, opts = {}) => buildProfile(lines, (pts) => call('sample', 14, pts), { step: 10, maxPts: 3000, ...opts }),
     // the path network's index (shared/network.js tileUrl), or null where the site has none
-    network: lazy(() => getJSON('data/net.json').catch(() => null)),
+    ...routing(lazy(() => getJSON('data/net.json', { cache: 'no-cache' }).catch(() => null))),     // a stale index would name tiles gone with a new build
     // nextmap's own mosaic of the season where it covers the region; else a scene per season and region, looked up
     // twice a day (the tiler's mosaic ids expire after a day)
     s2Scene: async (season, region) => {

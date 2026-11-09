@@ -1,14 +1,18 @@
 // The route being planned, drawn into its own overlay canvas per terrain tile, so it lies on the ground like the
 // routes but is redrawn on its own while it is edited (and only in the tiles it crosses). A dark edge, the
-// activity's colour, and the steep stretches in the colours of their class.
+// activity's colour, the steep stretches in the colours of their class, and dashed on top the marked stretches (the
+// bike pushed or carried, harder than the grade).
 import { HALF, tileSize, lonToX, latToY } from './geo.js';
 
 export class PlanLayer {
-  constructor() { this.lines = []; this.colors = null; this.color = '#ff5a2e'; this.box = null; this.version = 0; }
+  constructor() { this.lines = []; this.marks = []; this.colors = null; this.color = '#ff5a2e'; this.box = null; this.version = 0; }
 
-  // lines of [lon, lat]; colors: for a single line, one colour (or null) per point for the stretch ending there
-  set(lines, color, colors = null) {
-    this.lines = (lines || []).filter((l) => l.length > 1).map((l) => l.map(([lon, lat]) => [lonToX(lon), latToY(lat)]));
+  // lines of [lon, lat]; colors: for a single line, one colour (or null) per point for the stretch ending there;
+  // marks: the marked stretches, lines of [lon, lat] along the others
+  set(lines, color, colors = null, marks = []) {
+    const merc = (l) => l.map(([lon, lat]) => [lonToX(lon), latToY(lat)]);
+    this.lines = (lines || []).filter((l) => l.length > 1).map(merc);
+    this.marks = marks.filter((l) => l.length > 1).map(merc);
     this.colors = colors && this.lines.length === 1 && colors.length === this.lines[0].length ? colors : null;
     this.color = color;
     const pts = this.lines.flat();
@@ -44,6 +48,9 @@ export class PlanLayer {
       path(l, i - 1, j); ctx.strokeStyle = c[i]; ctx.lineWidth = w; ctx.stroke();
       i = j + 1;
     }
+    ctx.setLineDash([w * 0.9, w * 1.3]); ctx.lineCap = 'butt';
+    for (const m of this.marks) { path(m); ctx.strokeStyle = 'rgba(14,14,14,0.92)'; ctx.lineWidth = w * 0.8; ctx.stroke(); }
+    ctx.setLineDash([]);
     return true;
   }
 }

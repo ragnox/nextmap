@@ -132,6 +132,16 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; margin: 0 1px; bor
 #plan .top { margin-top: 0; justify-content: space-between; }
 #p-name { width: 100%; margin: 8px 0; font-size: 16px; font-weight: 600; }
 #p-activity { margin-bottom: 8px; }
+#p-way { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+#p-mode { flex: 1 1 190px; }
+#p-way label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+#p-grade { max-width: 220px; }
+#p-route { margin-top: 8px; display: grid; gap: 4px; }
+#p-route .mark a { color: inherit; font-weight: 600; text-decoration: underline dotted; text-underline-offset: 3px; }
+#p-route .mark a::before { content: ''; display: inline-block; width: 18px; height: 5px; margin-right: 6px; vertical-align: middle;
+  background: repeating-linear-gradient(90deg, #f6f5f0 0 4px, #141414 4px 9px); border-radius: 2px; }
+#p-route button { padding: 2px 8px; font-size: 12px; margin-left: 4px; }
+#p-route .park { padding: 6px 8px; border-radius: 8px; background: rgba(59, 130, 246, 0.16); }
 .tools { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
 .tools button { padding: 4px 9px; font-size: 13px; }
 .tools button:disabled, #p-actions button:disabled { opacity: 0.4; cursor: default; }
@@ -154,6 +164,8 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; margin: 0 1px; bor
 .wp.start { left: -9px; top: -9px; width: 18px; height: 18px; background: #19d66b; }
 .wp.end { left: -9px; top: -9px; width: 18px; height: 18px; background: #ff3b30; }
 .wp.start.end { background: linear-gradient(90deg, #19d66b 50%, #ff3b30 50%); }
+.wp.park { left: -10px; top: -10px; width: 20px; height: 20px; border-radius: 5px; background: #3b82f6; }
+.wp.park::after { content: 'P'; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font: 700 12px/1 system-ui; }
 
 #layers-btn { display: none; }
 #sheet-handle { display: none; }

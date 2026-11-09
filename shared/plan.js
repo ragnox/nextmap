@@ -1,52 +1,133 @@
-// A route planned on the map: waypoints joined by legs. A leg is freehand for now: the straight line between its two
-// waypoints, or the line sketched by hand in between (`via`). Legs that follow the path network will have the same
-// shape, with the routed line as `via`.
+// A route planned on the map: waypoints joined by legs. A leg is freehand (`mode: 'free'`), the straight line between
+// its two waypoints or the line sketched by hand in between (`via`), or follows the path network (`mode: 'path'`),
+// with the routed line as `via`, the stretches to push or carry the bike (or harder than the grade) as `marks`
+// ([first, last, why] indexes into the leg's line) and as `key` what it was routed for (routeKey): when the waypoints,
+// the activity or the grade change, the key no longer matches and the leg is routed again.
+// A bike route can leave the bike at a waypoint (`park`): from there it is walked until it comes back to that point.
 // Plans are values: every edit returns a new plan, so undo is a list of the earlier ones.
-import { haversine, lineLength, simplify } from './geo.js';
+import { haversine, lineLength, simplify, climb } from './geo.js';
 
 export const ACTIVITIES = ['hike', 'mtb', 'emtb', 'skitour'];
+// riding: speed on the flat (km/h), climbing (m/h) and downhill (km/h)
+export const RIDE = { mtb: [15, 550, 18], emtb: [18, 900, 20] };
+// the grade a route keeps to: hiking by the SAC scale (T1-T6), riding by the MTB scale (S0-S5); harder is marked
+export const GRADES = {
+  hike: { scale: 'T', min: 1, max: 6, def: 3 }, skitour: { scale: 'T', min: 1, max: 6, def: 6 },
+  mtb: { scale: 'S', min: 0, max: 5, def: 2 }, emtb: { scale: 'S', min: 0, max: 5, def: 2 },
+};
+const WALK = { activity: 'hike', grade: GRADES.hike.def };
 
-export const emptyPlan = (activity = 'hike', name = '') => ({ name, activity, points: [], legs: [] });
-const leg = (via = []) => ({ mode: 'free', via });
+export const emptyPlan = (activity = 'hike', name = '') => ({ name, activity, grade: GRADES[activity].def, park: null, points: [], legs: [] });
+const leg = (via = [], mode = 'free') => ({ mode, via });
+// a leg whose shape no longer fits: a path leg goes straight until it is routed again
+const reset = (l) => (l.mode === 'path' ? leg([], 'path') : l);
 
 // ---------------------------------------------------------------- editing
-export function addPoint(plan, p, via = []) {
+export function addPoint(plan, p, via = [], mode = 'free') {
   if (!plan.points.length) return { ...plan, points: [p], legs: [] };
-  return { ...plan, points: [...plan.points, p], legs: [...plan.legs, leg(via)] };
+  return { ...plan, points: [...plan.points, p], legs: [...plan.legs, leg(via, mode)] };
 }
 
 export function movePoint(plan, i, p) {
-  const points = plan.points.slice();
+  const points = plan.points.slice(), legs = plan.legs.slice();
   points[i] = p;
-  return { ...plan, points };
+  for (const j of [i - 1, i]) if (legs[j]) legs[j] = reset(legs[j]);
+  return { ...plan, points, legs };
 }
 
-// a new waypoint at p on leg i; a sketched leg is split where p is closest to it
+// a new waypoint at p on leg i; the leg's line is split where p is closest to it
 export function insertPoint(plan, i, p) {
-  const line = legLine(plan, i), via = plan.legs[i].via;
+  const line = legLine(plan, i), { via, mode } = plan.legs[i];
   const s = nearestSegment(line, p).seg;                // line[s]..line[s + 1], and line[k] is via[k - 1]
-  const legs = [...plan.legs.slice(0, i), leg(via.slice(0, s)), leg(via.slice(s)), ...plan.legs.slice(i + 1)];
-  return { ...plan, points: [...plan.points.slice(0, i + 1), p, ...plan.points.slice(i + 1)], legs };
+  const legs = [...plan.legs.slice(0, i), leg(via.slice(0, s), mode), leg(via.slice(s), mode), ...plan.legs.slice(i + 1)];
+  return { ...plan, park: plan.park != null && plan.park > i ? plan.park + 1 : plan.park, points: [...plan.points.slice(0, i + 1), p, ...plan.points.slice(i + 1)], legs };
+}
+
+// a waypoint at point k of leg i's line (0 < k < its length - 1), the line kept as it is on both sides
+export function splitAt(plan, i, k) {
+  const line = legLine(plan, i), l = plan.legs[i];
+  const marks = l.marks || [], cut = (lo, hi, off) => marks.filter(([a, b]) => b > lo && a < hi).map(([a, b, w]) => [Math.max(a, lo) - off, Math.min(b, hi) - off, w]);
+  const first = { ...l, via: line.slice(1, k), marks: cut(0, k, 0) }, second = { ...l, via: line.slice(k + 1, -1), marks: cut(k, line.length - 1, k) };
+  const next = { ...plan, park: plan.park != null && plan.park > i ? plan.park + 1 : plan.park,
+    points: [...plan.points.slice(0, i + 1), line[k], ...plan.points.slice(i + 1)], legs: [...plan.legs.slice(0, i), first, second, ...plan.legs.slice(i + 1)] };
+  // routed legs keep counting as routed for their new ends
+  for (const j of [i, i + 1]) if (next.legs[j].mode === 'path' && l.key === routeKey(plan, i)) next.legs[j] = { ...next.legs[j], key: routeKey(next, j) };
+  return next;
 }
 
 // without waypoint i; the legs on either side become one
 export function removePoint(plan, i) {
   const n = plan.points.length;
-  if (n <= 1) return { ...plan, points: [], legs: [] };
-  const points = plan.points.filter((_, k) => k !== i);
+  if (n <= 1) return { ...plan, park: null, points: [], legs: [] };
+  const points = plan.points.filter((_, k) => k !== i), a = plan.legs[i - 1], b = plan.legs[i];
   const legs = i === 0 ? plan.legs.slice(1) : i === n - 1 ? plan.legs.slice(0, -1)
-    : [...plan.legs.slice(0, i - 1), leg([...plan.legs[i - 1].via, ...plan.legs[i].via]), ...plan.legs.slice(i + 1)];
-  return { ...plan, points, legs };
+    : [...plan.legs.slice(0, i - 1), leg([...a.via, ...b.via], a.mode === 'path' && b.mode === 'path' ? 'path' : 'free'), ...plan.legs.slice(i + 1)];
+  const park = plan.park == null || plan.park === i ? null : plan.park > i ? plan.park - 1 : plan.park;
+  return { ...plan, park, points, legs: legs.map((l, j) => (j === i - 1 && i > 0 && i < n - 1 ? reset(l) : l)) };
 }
 
 export const reverse = (plan) => ({
-  ...plan, points: plan.points.slice().reverse(), legs: plan.legs.slice().reverse().map((l) => ({ ...l, via: l.via.slice().reverse() })),
+  ...plan, park: null, points: plan.points.slice().reverse(),
+  legs: plan.legs.slice().reverse().map((l) => ({ mode: l.mode, via: l.via.slice().reverse() })),
 });
-export const backToStart = (plan) => (plan.points.length > 1 ? addPoint(plan, plan.points[0]) : plan);
+export const backToStart = (plan, mode = 'free') => (plan.points.length > 1 ? addPoint(plan, plan.points[0], [], mode) : plan);
+// the same way back: routed legs stay as they are, their marks mirrored (but not the climbs too steep to ride, which
+// are downhill now, nor the one-way streets)
 export function outAndBack(plan) {
   if (plan.points.length < 2) return plan;
-  const back = reverse(plan);
-  return { ...plan, points: [...plan.points, ...back.points.slice(1)], legs: [...plan.legs, ...back.legs] };
+  const n = plan.legs.length, back = plan.legs.slice().reverse().map((l, j) => {
+    if (l.mode !== 'path') return { mode: l.mode, via: l.via.slice().reverse() };
+    const L = l.via.length + 1;
+    return { ...l, via: l.via.slice().reverse(), marks: (l.marks || []).filter((m) => m[2] !== 'steep' && m[2] !== 'against').map(([a, b, w]) => [L - b, L - a, w]), routed: l.key === routeKey(plan, n - 1 - j) };
+  });
+  const next = { ...plan, points: [...plan.points, ...plan.points.slice(0, -1).reverse()], legs: [...plan.legs, ...back] };
+  next.legs = next.legs.map((l, j) => {
+    if (j < n || !('routed' in l)) return l;
+    const { routed, ...rest } = l;
+    return routed ? { ...rest, key: routeKey(next, j) } : rest;
+  });
+  return next;
+}
+
+// ---------------------------------------------------------------- following the path network
+// the legs walked: from the waypoint the bike is left at until the route comes back to it
+export function walkedLegs(plan) {
+  const out = plan.legs.map(() => false);
+  if (plan.park == null || !RIDE[plan.activity] || !plan.points[plan.park]) return out;
+  const depot = plan.points[plan.park];
+  for (let i = plan.park; i < plan.legs.length; i++) {
+    out[i] = true;
+    if (haversine(plan.points[i + 1], depot) < 25) break;
+  }
+  return out;
+}
+// what leg i is routed for: { activity, grade }
+export const legProfile = (plan, i) => (walkedLegs(plan)[i] ? WALK : { activity: plan.activity, grade: plan.grade ?? GRADES[plan.activity].def });
+const pt = (p) => `${p[0]},${p[1]}`;
+export const routeKeyOf = ({ activity, grade }, a, b) => `${activity}:${grade}:${pt(a)}:${pt(b)}`;
+export const routeKey = (plan, i) => routeKeyOf(legProfile(plan, i), plan.points[i], plan.points[i + 1]);
+export const needsRoute = (plan, i) => plan.legs[i].mode === 'path' && plan.legs[i].key !== routeKey(plan, i);
+// leg i as routed: r = { via, marks } or { error }
+export function setRoute(plan, i, r) {
+  const legs = plan.legs.slice();
+  legs[i] = { mode: 'path', via: r.via || [], marks: r.marks || [], key: routeKey(plan, i), ...(r.error && { failed: r.error }) };
+  return { ...plan, legs };
+}
+// the bike left at waypoint i (null: ridden all the way)
+export const parkAt = (plan, i) => ({ ...plan, park: i });
+
+// the marked stretches of the whole route: [first, last, why] as indexes into planLine, neighbours of one kind joined
+export function planMarks(plan) {
+  const out = [];
+  let at = 0;
+  plan.legs.forEach((l) => {
+    for (const [a, b, w] of l.marks || []) {
+      const m = out[out.length - 1];
+      if (m && m[2] === w && m[1] >= at + a) m[1] = Math.max(m[1], at + b); else out.push([at + a, at + b, w]);
+    }
+    at += l.via.length + 1;
+  });
+  return out;
 }
 
 // ---------------------------------------------------------------- geometry
@@ -103,7 +184,7 @@ export function planFromLine(line, { activity = 'hike', name = '', every = 1500 
 }
 
 // ---------------------------------------------------------------- in the address bar
-// "1.<activity>.<points>.<waypoints>": the points of the whole line as steps of 1e-5° (about a metre), and which of
+// "2.<activity>.<points>.<waypoints>.<options>.<marks>": the points of the whole line as steps of 1e-5° (about a metre), and which of
 // them are waypoints as gaps between their positions, all as variable-length numbers in base64url
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 function putInt(out, v) {
@@ -122,9 +203,12 @@ function readInts(s) {
   return out;
 }
 
+// version 2 adds ".<grade><f or p per leg>[b<waypoint the bike is left at>].<marks>", the marks as leg (gap from the
+// last), first point, length and kind (MARK_CODES) of each
+const MARK_CODES = ['push', 'carry', 'hard', 'closed', 'steep', 'against'];
 export function encodePlan(plan) {
-  const coords = [], gaps = [];
-  let lx = 0, ly = 0, at = 0, last = 0;
+  const coords = [], gaps = [], marks = [];
+  let lx = 0, ly = 0, at = 0, last = 0, lastLeg = 0;
   const put = ([lon, lat]) => {
     const x = Math.round(lon * 1e5), y = Math.round(lat * 1e5);
     putInt(coords, x - lx); putInt(coords, y - ly); lx = x; ly = y;
@@ -133,20 +217,35 @@ export function encodePlan(plan) {
     if (i) for (const v of plan.legs[i - 1].via) { put(v); at++; }
     put(p); putInt(gaps, at - last); last = at; at++;
   });
-  return `1.${Math.max(0, ACTIVITIES.indexOf(plan.activity))}.${coords.join('')}.${gaps.join('')}`;
+  plan.legs.forEach((l, i) => {
+    for (const [a, b, w] of l.marks || []) { putInt(marks, i - lastLeg); putInt(marks, a); putInt(marks, b - a); putInt(marks, MARK_CODES.indexOf(w)); lastLeg = i; }
+  });
+  const opts = `${plan.grade ?? GRADES[plan.activity].def}${plan.legs.map((l) => (l.mode === 'path' ? 'p' : 'f')).join('')}${plan.park != null ? `b${plan.park}` : ''}`;
+  return `2.${Math.max(0, ACTIVITIES.indexOf(plan.activity))}.${coords.join('')}.${gaps.join('')}.${opts}.${marks.join('')}`;
 }
 
 export function decodePlan(code, name = '') {
-  const [v, act, c, g] = String(code).split('.');
-  if (v !== '1' || c == null || g == null) throw new Error('not a plan');
+  const [v, act, c, g, opts = '', mk = ''] = String(code).split('.');
+  if ((v !== '1' && v !== '2') || c == null || g == null) throw new Error('not a plan');
   const n = readInts(c), line = [];
   let x = 0, y = 0;
   for (let i = 0; i + 1 < n.length; i += 2) { x += n[i]; y += n[i + 1]; line.push([x / 1e5, y / 1e5]); }
   const idx = [];
   readInts(g).reduce((a, d) => { idx.push(a + d); return a + d; }, 0);
   if (!idx.length || idx[0] !== 0 || idx.at(-1) >= line.length || idx.some((v2, i) => i && v2 <= idx[i - 1])) throw new Error('not a plan');
-  let plan = emptyPlan(ACTIVITIES[Number(act)] || 'hike', name);
-  idx.forEach((k, i) => { plan = addPoint(plan, line[k], i ? line.slice(idx[i - 1] + 1, k) : []); });
+  const activity = ACTIVITIES[Number(act)] || 'hike', o = v === '2' ? /^(\d)([fp]*)(?:b(\d+))?$/.exec(opts) : null;
+  if (v === '2' && !o) throw new Error('not a plan');
+  let plan = emptyPlan(activity, name);
+  if (o) plan = { ...plan, grade: Math.min(GRADES[activity].max, Math.max(GRADES[activity].min, Number(o[1]))), park: o[3] != null && Number(o[3]) < idx.length ? Number(o[3]) : null };
+  idx.forEach((k, i) => { plan = addPoint(plan, line[k], i ? line.slice(idx[i - 1] + 1, k) : [], o?.[2][i - 1] === 'p' ? 'path' : 'free'); });
+  const m = readInts(mk);
+  for (let i = 0, leg = 0; i + 3 < m.length; i += 4) {
+    leg += m[i];
+    const l = plan.legs[leg], w = MARK_CODES[m[i + 3]];
+    if (l && w && m[i + 2] > 0 && m[i + 1] + m[i + 2] <= l.via.length + 1) (l.marks ||= []).push([m[i + 1], m[i + 1] + m[i + 2], w]);
+  }
+  // the routed legs count as routed; one without a line (not found, or not yet routed when kept) is tried again
+  plan.legs = plan.legs.map((l, i) => (l.mode === 'path' && l.via.length ? { ...l, key: routeKey(plan, i) } : l));
   return plan;
 }
 
@@ -174,9 +273,6 @@ function stretches(p, len = 100) {
   return out;
 }
 
-// riding: speed on the flat (km/h), climbing (m/h) and downhill (km/h)
-const RIDE = { mtb: [15, 550, 18], emtb: [18, 900, 20] };
-
 // hours on the way, from the elevation profile ({ d, e, length, ascent, descent }):
 //   hiking: DIN 33466 (4 km/h, 300 m/h up, 500 m/h down; the longer of distance and climbing plus half the other)
 //   ski touring: Munter (up: km + 100 m climbed count 1 unit, 4 units/h; down: km + 200 m count 1, 10 units/h)
@@ -196,6 +292,33 @@ export function estimateTime(activity, p) {
     }
   }
   return t;
+}
+
+// hours for the whole plan, the ridden and walked parts of a Bike & Hike each at their own pace
+export function planTime(plan, p) {
+  if (!p || !p.length) return null;
+  const walked = walkedLegs(plan);
+  if (!walked.some(Boolean)) return estimateTime(plan.activity, p);
+  const ends = [];                                       // metres along the line where each leg ends
+  let d = 0, last = plan.points[0];
+  plan.legs.forEach((l, i) => { for (const q of [...l.via, plan.points[i + 1]]) { d += haversine(last, q); last = q; } ends.push(d); });
+  let t = 0;
+  for (let i = 0; i < plan.legs.length;) {
+    let j = i;
+    while (j + 1 < plan.legs.length && walked[j + 1] === walked[i]) j++;
+    t += estimateTime(walked[i] ? 'hike' : plan.activity, part(p, i ? ends[i - 1] : 0, ends[j])) ?? 0;
+    i = j + 1;
+  }
+  return t;
+}
+// the profile between d0 and d1 metres, from the sample nearest the one to the sample nearest the other (so the parts
+// of a route meet at a sample)
+function part(p, d0, d1) {
+  const near = (d) => { let i = 0; while (i + 1 < p.d.length && Math.abs(p.d[i + 1] - d) <= Math.abs(p.d[i] - d)) i++; return i; };
+  const i0 = near(d0), i1 = near(d1);
+  if (i1 <= i0) return null;
+  const d = p.d.slice(i0, i1 + 1).map((v) => v - p.d[i0]), e = p.e.slice(i0, i1 + 1), { up, down } = climb(d, e);
+  return { d, e, length: d.at(-1), ascent: up, descent: down };
 }
 
 // steep stretches, for colouring the line and the profile: in summer by the gradient of the route itself (percent,
